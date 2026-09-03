@@ -1,52 +1,56 @@
 ---
 name: orchestra-status
-description: Report the Orchestra harness's live state in this project — harness version, mode (Director or normal), enforcement/pause state, review routing, guard wiring, installed agents, packs, specialists and skills, verification manifest, plans and ledger. Use when the user asks whether the Orchestra is active, which mode the session is running, whether the codex pack is installed and its Sol lane available, why a denial happened, what's installed, or for a general harness health check. Read-only; changes nothing.
+description: "Report the Codex Orchestra harness state: protocol version, Director enforcement and pause state, guard wiring, installed TOML agents, Claude review pack, skills, project policy, verification manifest, plans, and review-lane availability. Read-only."
 ---
 
 # Orchestra status
 
-Produce one compact, factual report of the harness's state in this project. This skill is orchestration-class (ORCHESTRA.md §7): safe in the Director's context, because every filesystem fact below comes from one scout mission — never from the Director's own search tools.
+Produce one compact factual status report. This skill is orchestration-class,
+but repository facts are reconnaissance: in active Director mode gather them
+through one read-only scout mission carrying the checklist below.
 
 ## Gather
 
-Mode first, no tools needed: §1 of the protocol — the "You are powered by the model named …" line in your system prompt. Fable or Opus → DIRECTOR MODE; anything else → NORMAL MODE.
-
-Then the facts. Under a Director, dispatch **one scout mission** carrying the checklist below verbatim; in a NORMAL-mode or paused session, check the same list directly with your own tools.
-
-1. **Pause state** — does `.claude/orchestra.pause` exist? Is `ORCHESTRA_PAUSE=1` set in the environment?
-2. **Guard wiring** — does `.claude/settings.json` contain a PreToolUse entry whose command references `orchestra-guard.js`? Does `.claude/hooks/orchestra-guard.js` exist?
-3. **Protocol** — does `.claude/ORCHESTRA.md` exist? What harness version does its header carry (`Installed by the Orchestra harness (vX.Y.Z)` in the first lines; installs stamped before versioning carry none)? Does `CLAUDE.md` contain the `<!-- ORCHESTRA:BEGIN` marker?
-4. **Company** — which of `scout.md`, `detective.md`, `executor.md`, `executor-heavy.md`, `executor-heavy-xhigh.md`, `reviewer.md` (core) and `reviewer-codex.md`, `executor-codex-heavy.md`, `architect-claude.md`, `architect-claude-xhigh.md`, `architect-claude-max.md`, `architect-codex.md`, `plan-synthesizer.md` (codex pack) are present in `.claude/agents/`? List any other `.md` files there as specialists.
-5. **Packs** — what does `.claude/orchestra-install.json` record under `packs` and `specialists` (absent = a pre-packs install, or none selected)? For the `codex` pack, do `.claude/hooks/orchestra-review.js`, `.claude/hooks/orchestra-exec.js`, and `.claude/hooks/orchestra-crossplan.js` exist?
-6. **Skills** — which skill directories exist under `.claude/skills/`? (Core: the `orchestra-*` set. From the `codex` pack: `cross-compare-plan`.)
-7. **Config** — from `.claude/orchestra.json` (absent = all defaults): `executorEngine` (default `claude`), counts of `directorBlockedPatterns`, `directorPlanPatterns`, and `directorMemoryPatterns`, any `directorAllowedTools`, whether a `verification` manifest exists (quote its `full` command if so), and any `codex` block (report `reviewModel` [default `gpt-5.6-sol`], `reviewTimeoutMs` [default 1800000], `execHeavyModel`/`execHeavyEffort` [defaults `gpt-5.6-sol`/`high`], `helpersDir`, `worktreeRoot`, `worktreeWarmupCmd`, and the counts of `doNotRun` and `integrityIgnore` entries; note explicitly when `authProbe` or `reviewRetries` has been turned off, since both are on by default and disabling them removes a reliability net).
-8. **Sol lane availability** — whenever the `codex` pack is installed (not only when a config routes there): is the Codex CLI on PATH (`command -v codex` or a version check; respect `CODEX_BIN` if set)? Do **not** run `orchestra-review.js --doctor` for this report: the doctor repairs the Codex install (it copies files into it), and this report changes nothing. Name repair as a fix instead.
-9. **Plans** — does `.claude/plans/` exist, how many `.md` files does it hold, and is `ledger.md` among them?
+1. **Enforcement:** whether `.codex/orchestra.pause` exists and whether
+   `ORCHESTRA_PAUSE=1` is set.
+2. **Protocol:** `.codex/ORCHESTRA.md` presence and stamped version; root
+   `AGENTS.md` managed `ORCHESTRA:BEGIN/END` block.
+3. **Guard:** `.codex/hooks/orchestra-guard.js` presence and SessionStart plus
+   PreToolUse entries in `.codex/hooks.json` that reference it.
+4. **Company:** presence of `scout.toml`, `detective.toml`, `executor.toml`,
+   `executor-heavy.toml`, `executor-heavy-xhigh.toml`, and `reviewer.toml` under
+   `.codex/agents/`; list other TOML profiles as specialists or pack roles.
+5. **Pack:** `.codex/orchestra-install.json` recorded packs/specialists and
+   whether `reviewer-claude.toml` plus `.codex/hooks/orchestra-review.js` exist.
+6. **Skills:** directories under `.agents/skills/`, including the core
+   `orchestra-plan`, `orchestra-review`, and `orchestra-status` skills.
+7. **Config:** from `.codex/orchestra.json`, or defaults when absent: verification
+   manifest, director blocked/allowed/plan patterns, and the `claude`
+   runner block including model, effort, timeout, retries, auth probe,
+   do-not-run count, worktree root, and integrity-ignore count.
+8. **Claude lane:** read-only availability check for the Claude CLI, respecting
+   configured `CLAUDE_BIN`. Do not run a doctor that repairs files during this
+   status command; name it as a suggested fix instead.
+9. **Plans:** Markdown count under `.codex/plans/` and whether `ledger.md` exists.
 
 ## Report
 
-Render exactly this block (drop the two Codex lines unless the pack is installed), then stop — no advice unless something is broken:
-
-```
+```text
 ORCHESTRA STATUS
-Mode:         DIRECTOR (Fable|Opus) | NORMAL (<model>)
-Enforcement:  active | paused (.claude/orchestra.pause) | paused (ORCHESTRA_PAUSE=1) | guard not wired
-Protocol:     .claude/ORCHESTRA.md <present (vX.Y.Z | unversioned)|MISSING> · CLAUDE.md import <present|MISSING>
-Company:      scout <✓|✗> detective <✓|✗> executor <✓|✗> executor-heavy <✓|✗> executor-heavy-xhigh <✓|✗> reviewer <✓|✗> · specialists: <names | none>
-Packs:        <names | none> (codex roles: reviewer-codex <✓|✗> executor-codex-heavy <✓|✗> architect-claude(+xhigh/max) <✓|✗> architect-codex <✓|✗> plan-synthesizer <✓|✗>)
-Skills:       <skill names | none>
-Executor:     claude (default) | claude (configured) | codex (Sol lane: available | UNAVAILABLE (<reason>))
-Sol lane:     available | UNAVAILABLE (<reason>) | pack not installed
-Codex config: review model <id | default gpt-5.6-sol> · review timeout <ms | default 1800000> · exec model/effort <id/level | defaults gpt-5.6-sol/high> · helpers <dir | none> · doNotRun <n>
-Policy:       blocked-patterns <n> · allowed-tools <names | none> · plan-patterns <n> · memory-patterns <n>
+Mode:         DIRECTOR | PAUSED
+Enforcement:  active | paused (.codex/orchestra.pause) | paused (ORCHESTRA_PAUSE=1) | guard not wired
+Protocol:     .codex/ORCHESTRA.md <present (vX.Y.Z|unversioned)|MISSING> · AGENTS.md block <present|MISSING>
+Company:      scout <✓|✗> detective <✓|✗> executor <✓|✗> executor-heavy <✓|✗> executor-heavy-xhigh <✓|✗> reviewer <✓|✗> · specialists: <names|none>
+Packs:        <names|none> · reviewer-claude <✓|✗>
+Skills:       <names|none>
+Review route: OpenAI-authored → Claude <available|UNAVAILABLE|pack not installed> · Anthropic-authored → native Sol
+Claude config: model <id|default> · effort <level|default> · timeout <ms|default> · doNotRun <n>
+Policy:       blocked-patterns <n> · allowed-tools <names|none> · plan-patterns <n>
 Verification: manifest present (full: <command>) | no manifest
 Plans:        <n> plan file(s) · ledger <present|none>
 ```
 
-Below the block add a single `FINDINGS:` line ONLY for inconsistencies, each with its one-line fix:
-
-- Guard entry present but a hook file missing, or marker block without `.claude/ORCHESTRA.md` → re-run the installer.
-- NORMAL mode yet the user reports denials → model detection failed: pause the harness (§6) and file a bug against the master.
-- `codex` pack installed but the Sol lane is UNAVAILABLE → this is an alarm condition under §5, never a silent expected fallback: name the reason, note that campaign review falls back to the fresh-context Opus `reviewer` carrying the §5 alarm, and suggest `--doctor` if the cause looks install-related.
-- The Codex CLI present, a lane routed to it, and the user reports runs that return nothing (reviews with no verdict, or orders reporting `EXEC_UNAVAILABLE` / no changes) → the install may be incomplete or a helper misplaced; both lanes share one Codex install. One command answers it and repairs what it can: `node .claude/hooks/orchestra-review.js --doctor`.
-- Pack files present but unrecorded in `.claude/orchestra-install.json` (a pre-packs install) → re-run the installer with `--packs <names>` so later updates keep them.
+Add one `FINDINGS:` line only for inconsistencies, each with a one-line fix.
+An installed but unavailable Claude lane is an alarm condition: state that
+campaign review falls back to fresh native Sol with the §5 alarm. Pack absence
+is expected configuration, not an availability failure.

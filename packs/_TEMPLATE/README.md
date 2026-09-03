@@ -1,27 +1,25 @@
 # Pack template
 
-Copy this directory to `packs/<your-pack>/` and edit `pack.json`. Underscore-
-prefixed directories are skipped by the installer, so this template is never
-installable itself.
+Copy this directory to `packs/<your-pack>/` and edit `pack.json`. Directories
+whose names begin with `_` are intentionally ignored by the installer.
 
-Then create whichever of these you need — the installer discovers files by
-walking the directories, so nothing needs registering anywhere:
+The installer discovers these optional surfaces recursively:
 
-```
+```text
 packs/<your-pack>/
-├── pack.json          ← required; `name` must match the directory name
-├── agents/*.md        ← subagents      → .claude/agents/
-├── hooks/*.js         ← runners        → .claude/hooks/
-└── skills/<skill>/    ← skills         → .claude/skills/<skill>/
-                          (each skill directory needs a SKILL.md)
+├── pack.json                required; `name` matches the directory
+├── agents/*.toml            → <project>/.codex/agents/
+├── hooks/*.js               → <project>/.codex/hooks/
+└── skills/<skill>/          → <project>/.agents/skills/<skill>/
+    └── SKILL.md
 ```
 
-Install it with:
+Install a pack with:
 
 ```bash
 node install.js /path/to/project --packs <your-pack>
 ```
 
-Read `packs/README.md` for the four rules a pack must follow — chiefly: degrade
-to an explicit `UNAVAILABLE` result when your dependency is missing, and never
-make the core harness depend on you.
+Pack dependencies must be optional. A missing binary, credential, or service
+returns an explicit `*_UNAVAILABLE` result; it must never make the core Codex
+harness unusable.

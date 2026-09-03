@@ -1,9 +1,7 @@
+# Local Orchestra state. Installed protocol, agents, and skills belong in the
+# target project; these files are operator/session state and never source.
+.codex/orchestra.pause
+.codex/plans/ledger.md
 
-.claude/orchestra-ledger.jsonl
-.claude/orchestra-manual-readings.md
-
-# WO-11 Quartermaster (class P0) data. Recorded allowance readings and the
-# published bucket_state snapshot are operator observations about a personal
-# vendor allowance — never committed. See quartermaster/README.md.
-.claude/orchestra-pool-readings.jsonl
-.claude/orchestra-pool-state.json
+# Local review artifacts.
+.orchestra-review/

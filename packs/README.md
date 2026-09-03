@@ -1,77 +1,41 @@
-# Packs — optional Orchestra modules
+# Packs - optional Codex Orchestra modules
 
-A **pack** is a self-contained bundle of harness parts that a project may or may
-not want: agents, hook runners, and skills that belong together and share a
-dependency the core harness does not have.
-
-The core harness — Director law, scout/detective/executor/reviewer, the guard,
-and the `orchestra-*` skills — is always installed. Everything in `packs/` is
-opt-in:
+A pack is an opt-in group of agent profiles and hook runners that shares an
+external dependency. The OpenAI Director, scouts, detectives, executors, native
+fallback reviewer, guard, and core skills work without a pack.
 
 ```bash
-node install.js /path/to/project --packs codex
+node install.js /path/to/project --packs claude
 ```
-
-Nothing here installs unless it is named. A project that never passes `--packs`
-gets a harness with no OpenAI surface at all, no missing-dependency warnings,
-and no files it did not ask for.
 
 ## Available packs
 
-| Pack | What it adds | Needs |
+| Pack | What it adds | Dependency |
 |---|---|---|
-| `codex` | Cross-vendor review (`reviewer-codex` → Codex CLI) and the two-architect `/cross-compare-plan` session (`architect-codex` → Codex CLI) | Codex CLI (`codex login` or `OPENAI_API_KEY`) |
+| `claude` | Default cross-family review of OpenAI-authored campaigns and an optional Anthropic planning counterpart | Authenticated Claude CLI or `ANTHROPIC_API_KEY` |
+
+Without the pack, campaigns use the fresh-context native OpenAI reviewer and
+must be reported as lacking cross-family review. If the pack is installed but
+the Claude lane fails, that is a visible fallback condition, not approval.
 
 ## Layout contract
 
-```
+```text
 packs/<name>/
-├── pack.json          ← metadata (required)
-├── agents/*.md        ← subagents, copied to .claude/agents/
-├── hooks/*.js         ← runners, copied to .claude/hooks/
-├── skills/<skill>/    ← skills, copied to .claude/skills/<skill>/
-└── README.md          ← optional, for humans reading the master
+|-- pack.json
+|-- agents/*.toml
+|-- hooks/*.js
+|-- skills/<skill>/
+`-- README.md
 ```
 
-The installer **discovers files by walking those directories** — `pack.json`
-never lists them. Add a file to `agents/`, and it installs; delete it, and the
-next install stops stamping it. That means the master is always the single
-source of truth for what a pack owns, which is also how `--uninstall` knows
-what to remove.
+The installer discovers files from these directories. Pack filenames must not
+collide with core harness files or another selected pack.
 
-`pack.json` carries only metadata:
+Every external runner must degrade explicitly: a missing dependency, timeout,
+transport error, or malformed response returns a named `*_UNAVAILABLE` result.
+Pack launchers relay the external result; they do not replace it with their own
+judgment.
 
-```json
-{
-  "name": "<must match the directory name>",
-  "title": "Short human-readable name",
-  "summary": "One or two sentences shown by the installer.",
-  "requires": { "bin": ["..."], "env": ["..."] },
-  "notes": ["Printed after a successful install — setup the user still owes."]
-}
-```
-
-Everything except `name` is optional.
-
-## Rules a pack must follow
-
-1. **Degrade, never fail.** A pack's runner must never crash the harness when
-   its dependency is absent. Return an explicit `*_UNAVAILABLE` verdict with
-   the reason, exactly as `orchestra-review.js` and `orchestra-crossplan.js` do
-   — a capability that could not run must never read as a success.
-2. **Nothing outside the harness may hard-depend on a pack.** The protocol,
-   the guard, and the core agents must all work with zero packs installed.
-   Reference pack roles conditionally ("if the codex pack is installed").
-3. **Skills stay orchestration-class.** Pack skills load into the Director's
-   context like any other, so their steps dispatch agents rather than assuming
-   the session's own hands (ORCHESTRA.md §7).
-4. **Name files distinctly.** Pack files land in the same `.claude/agents/`,
-   `.claude/hooks/`, and `.claude/skills/` directories as the core harness, so
-   a colliding filename would overwrite core harness parts. The installer
-   refuses to install a pack whose file names collide with the core set.
-
-## Minting a new pack
-
-Copy `_TEMPLATE/` to `packs/<your-pack>/`, edit `pack.json`, drop your agents,
-hooks, and skills into the matching subdirectories, and add a row to the table
-above. No installer changes are needed — discovery is automatic.
+To create a pack, copy `_TEMPLATE/`, set `pack.json.name` to the directory name,
+and add uniquely named profiles, hooks, and orchestration-class skills.

@@ -1,23 +1,5 @@
 name: tests
 
-# Why this exists, and why it is this small:
-#
-# Every field failure the cross-vendor review lane has produced happened on
-# WINDOWS — and the suite that is supposed to catch them used to exit 0 there
-# even when cases failed, so a broken suite looked green through two rounds of
-# real failures. Windows is also the only platform the owner installs into and
-# runs the helm on (2026-09-01), so windows-latest x node 20/22/24 is the
-# REQUIRED matrix. One ubuntu job runs ADVISORY (continue-on-error): POSIX
-# drift stays visible without gating a merge on a platform nobody here uses —
-# the WO-14b merge went red for a day on nothing but Windows-shaped fixtures
-# (zombie reaping, /var symlinks, E:\ literals) before that rule was set.
-#
-# Everything else is deliberately absent. There is no build, no bundle, and no
-# publish step: the harness is distributed by `git pull` + `node install.js`, so
-# there is nothing to deploy. There is no linter or formatter job either — this
-# repository has zero dependencies and no package.json, and importing a
-# toolchain larger than the project it guards would cost more than it catches.
-
 on:
   push:
     branches: [main]
@@ -28,20 +10,16 @@ permissions:
   contents: read
 
 concurrency:
-  # A newer push to the same branch makes the older run's answer irrelevant.
   group: tests-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  codex-lanes:
-    name: codex lanes · ${{ matrix.os }} · node ${{ matrix.node }}${{ matrix.advisory && ' · advisory' || '' }}
+  codex-orchestra:
+    name: codex mirror - ${{ matrix.os }} - node ${{ matrix.node }}${{ matrix.advisory && ' - advisory' || '' }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    # Advisory jobs report but never fail the workflow or block a merge.
+    timeout-minutes: 15
     continue-on-error: ${{ matrix.advisory }}
     strategy:
-      # One node version's failure must never hide another's — the whole
-      # point of the matrix is to see WHICH runners disagree.
       fail-fast: false
       matrix:
         os: [windows-latest]
@@ -54,81 +32,31 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
 
-      - name: Identify the environment under test
-        shell: bash
-        run: |
-          node --version
-          git --version
-
-      - name: Give git an identity (the suite builds fixture repositories)
+      - name: Configure fixture Git identity
         shell: bash
         run: |
           git config --global user.email "orchestra-ci@users.noreply.github.com"
           git config --global user.name "Orchestra CI"
           git config --global init.defaultBranch main
 
-      - name: Frontmatter lint (whole repository)
-        # A YAML-unsafe frontmatter value makes Claude Code drop the file
-        # SILENTLY — the agent never registers, with no log anywhere. Strict:
-        # warnings (values that parse but lean on the CRLF-fragile repair
-        # pass) fail this step too, so the class can never merge again.
+      - name: Validate source profiles and manifests
         run: node install.js --lint
 
-      - name: Frontmatter-lint suite
-        # Exercises the linter against the unparseable class, the installer's
-        # refusal to stamp a failing source, LF normalization of installed
-        # markdown, the stamped .claude/.gitattributes, and the stamped
-        # .claude/hooks/package.json that keeps hook scripts CommonJS under a
-        # "type": "module" target.
-        run: node tests/frontmatter-lint.test.js
+      - name: Provider inversion contract
+        run: node tests/provider-contract.test.js
 
-      - name: Review-lane suite
-        # The suite drives the real runner against a stub Codex and asserts on
-        # what the engine was handed. It needs no install step: plain node, plain
-        # git, no dependencies.
-        run: node tests/review-lane.test.js
-
-      - name: Scan-lane suite
-        # Exercises install.js --scan / --update against real installs the
-        # installer itself produced, then aged. Nothing is stubbed: the point
-        # is that the scan reads what the installer actually writes.
-        run: node tests/scan-lane.test.js
-
-      - name: Exec-lane suite
-        # Same shape for the execution runner: the stub reports what the engine
-        # saw (model, sandbox, effort, identity, brief markers), and the suite
-        # asserts on settings resolution, the tree audit, and the no-retry law.
-        run: node tests/exec-lane.test.js
-
-      - name: MCP-lane suite
-        # The orchestra-engine MCP server — the typed transport that replaced
-        # the launcher shell pipeline. Speaks real JSON-RPC to the server over
-        # stdio, drives the real runners against the stub engine underneath,
-        # and asserts the server relays reports verbatim and speaks only in
-        # MCP TRANSPORT terms when the transport itself fails.
-        run: node tests/mcp-lane.test.js
-
-      - name: Install suite
-        # 3.0 legacy-only installer (plans/port-3.0/reverse-port-3.0-plan.md
-        # WO-1): fresh install, idempotent re-run, uninstall, user-settings
-        # preservation, pack selection and MCP merge, specialists, permission
-        # ownership; user keys preserved byte-for-byte in settings.json,
-        # .mcp.json, and orchestra.json; malformed JSON and malformed
-        # permissions refused before anything is touched; uninstall order
-        # (settings validated first); default vs --grant-push grants incl.
-        # the deny counterweight; installedPermissions tracking; --lint; and
-        # the Design Decision 8 config preflight (refuse a 2.0 roster:new
-        # target, scrub its deprecated keys, warn on an orphaned runtime dir).
+      - name: Installer suite
         run: node tests/install.test.js
 
-      - name: Guard suite (orchestra-guard.js)
-        # sdc-011/012: the .md + real-path plan-file containment fix
-        # (symlink/junction escape denied), the deny hint naming every
-        # configured plan directory, and model-aware dormancy — an
-        # undetermined session model always stands the guard down.
+      - name: Coexistence contract
+        run: node tests/coexistence.test.js
+
+      - name: Director guard suite
         run: node tests/guard.test.js
+
+      - name: Claude review lane suite
+        run: node tests/review-lane.test.js

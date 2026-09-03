@@ -1,13 +1,7 @@
 #!/usr/bin/env sh
-# Orchestra installer wrapper (POSIX)
-#   ./install.sh /path/to/project
-#   ./install.sh /path/to/project --uninstall
-#   ./install.sh --scan /path/to/code            report which installs are behind
-#   ./install.sh --scan /path/to/code --update   ...and bring the stale ones up
-#   ./install.sh --lint [dir]                    frontmatter lint only (CI / contributors)
-set -e
+set -eu
 command -v node >/dev/null 2>&1 || {
-  echo "ERROR: Node.js is required (used by the installer and the guard hook)." >&2
+  echo "ERROR: Node.js is required. Install it and ensure 'node' is on PATH." >&2
   exit 1
 }
 DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
