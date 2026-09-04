@@ -2,9 +2,10 @@
 
 This optional pack supplies the opposite-family judgment lane when Codex is in
 the Director's chair. OpenAI agents still direct, scout, investigate, and
-execute. When the pack is installed, an OpenAI-authored campaign goes to
-`reviewer-claude` by default; Claude-authored work goes to the fresh-context
-native OpenAI reviewer so author and reviewer remain on different providers.
+execute. When the pack is installed, an OpenAI-authored campaign goes through
+the project-scoped Claude review MCP transport by default; Claude-authored work
+goes to the fresh-context native OpenAI reviewer so author and reviewer remain
+on different providers.
 
 ```bash
 node install.js /path/to/project --packs claude
@@ -16,8 +17,10 @@ counterpart for a cross-family planning round.
 
 ## Review invocation
 
-`reviewer-claude` calls the pack's project-scoped
-`orchestra_claude_review.orchestra_review` MCP tool once. The tool accepts the
+The Director calls the pack's project-scoped
+`orchestra_claude_review.orchestra_review` MCP tool once. This narrow transport
+exception does not make the Director the reviewer: the tool starts a fresh,
+independent Claude CLI process. The tool accepts the
 work order, executor report, refs, and explicit controls as typed arguments,
 writes its own temporary input files, and blocks until the runner process has
 closed. It then relays the runner's stdout verbatim.
@@ -65,9 +68,15 @@ whitespace-only runner stdout (including exit code 0), abnormal runner exit,
 cancellation, a wedged-runner backstop, capture overflow, or output without one
 recognized verdict becomes a non-empty `REVIEW_UNAVAILABLE` report. Diagnostic
 tails are bounded and credential-shaped values are redacted. A valid runner
-report is returned byte-for-byte; the launcher must not append its own text.
+report is returned byte-for-byte; the Director must not append its own text.
 
 ## Configuration
+
+The installer maintains only the marked Claude-pack block in
+`.codex/config.toml`; all other project settings remain user-owned. The MCP
+registration is project-scoped because Codex 0.153.x can omit servers declared
+only in a spawned custom-agent TOML. Re-run the installer after selecting or
+removing the pack so the marked block matches the installed hooks.
 
 Durable settings live under `claude` in `.codex/orchestra.json`:
 

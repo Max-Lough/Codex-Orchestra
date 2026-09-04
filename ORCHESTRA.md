@@ -39,11 +39,11 @@ quietly become the worker.
 | Heavy executor | `executor-heavy` | GPT-5.6 Sol / high | hard, coupled, or escalated work chosen during planning |
 | Deep executor | `executor-heavy-xhigh` | GPT-5.6 Sol / xhigh | the hardest split-resistant work, chosen during planning |
 | Native reviewer | `reviewer` | GPT-5.6 Sol / max, fresh context | fallback review; primary review of Anthropic-authored work |
-| Claude reviewer † | `reviewer-claude` | thin OpenAI launcher → Claude | default independent review of OpenAI-authored work |
+| Claude reviewer † | project MCP transport → Claude CLI | configured by the `claude` pack | default independent review of OpenAI-authored work |
 
 † Installed by the optional `claude` pack. Without it, OpenAI execution and
-fresh-context native review remain available. Route only to profiles that are
-actually installed; `/orchestra-status` lists them.
+fresh-context native review remain available. Route only to review transports
+and profiles that are actually installed; `/orchestra-status` lists them.
 
 Use scouts for *where/what/list*. Use a detective for *why/how/which* questions
 whose next probe depends on the previous evidence. A scout `UNKNOWN` may be
@@ -59,9 +59,11 @@ report promising a later report is a failed round: re-dispatch; do not wait.
    installs, migrations, and mutating MCP/app actions to an executor or
    specialist. Delegate independent verification to a reviewer.
 2. **Use only Director tools directly.** User communication, planning/goal
-   state, spawning, steering, waiting, and reading artifacts explicitly handed
-   back are Director work. Reading `.codex/orchestra.json` is allowed as known
-   configuration input.
+   state, spawning, steering, waiting, reading artifacts explicitly handed
+   back, and the one blocking `orchestra_claude_review.orchestra_review`
+   transport call are Director work. That call delegates judgment to a fresh
+   Claude process; the Director never supplies its own verdict. Reading
+   `.codex/orchestra.json` is allowed as known configuration input.
 3. **Plan exception only.** The Director may write Markdown plans under
    `.codex/plans/` and configured plan paths. This is not a general write
    loophole. Never alter the managed `ORCHESTRA:BEGIN` / `ORCHESTRA:END`
@@ -132,8 +134,9 @@ and confirm the tree is idle before dispatch.
 
 Review routing follows authorship:
 
-- OpenAI-authored work → `reviewer-claude` by default when the `claude` pack is
-  installed.
+- OpenAI-authored work → the Director calls the installed project-scoped
+  `mcp__orchestra_claude_review__orchestra_review` tool exactly once. The tool
+  blocks through a fresh Claude review and returns its report verbatim.
 - Anthropic-authored work → fresh-context native `reviewer`, keeping author and
   reviewer in different model families.
 - No Claude pack → native `reviewer`; state once in REPORT that cross-family
@@ -166,6 +169,9 @@ outside explicit harness install, update, or removal work.
 
 - Advisory/orchestration skills run in the Director context: status, planning,
   review routing, and plan arbitration.
+- The read-only Claude review MCP call is the narrow review-routing exception
+  to the normal rule that worker tools are delegated. It transports the order;
+  the independent Claude process performs the review.
 - Hands-on skills run inside an executor or specialist order. Tell the worker
   to load the named skill and obey it within scope.
 - Mutating MCP, connector, browser, or desktop actions are execution. Read-only
@@ -195,6 +201,10 @@ outside explicit harness install, update, or removal work.
   not expand Claude-style instruction imports.
 - `.codex/hooks.json` wires `SessionStart` and `PreToolUse` to
   `.codex/hooks/orchestra-guard.js`. The user must trust project hooks.
+- The `claude` pack installs a marked project-level MCP block in
+  `.codex/config.toml`. Codex 0.153.x does not reliably propagate an MCP server
+  declared only inside a custom-agent TOML, so review routing uses this
+  project-scoped registration.
 - Custom profiles set `[features] hooks = false`; their developer instructions
   and sandboxes enforce worker-role limits without inheriting the Director guard.
 - If profile selection fails, include the complete role law in the spawn prompt.

@@ -4,15 +4,15 @@
   "summary": "Adds mandatory-by-policy cross-family review of OpenAI-authored campaigns through a fresh Claude CLI session, plus an optional Anthropic planning counterpart.",
   "requires": {
     "bin": [
-      "claude (Claude CLI) - for reviewer-claude and planner-claude"
+      "claude (Claude CLI) - for cross-family review and planner-claude"
     ],
     "env": [
       "ANTHROPIC_API_KEY or an authenticated Claude CLI login"
     ]
   },
   "notes": [
-    "OpenAI-authored campaigns route to reviewer-claude by default when this pack is installed.",
-    "reviewer-claude uses one blocking project-scoped MCP transport call; it never polls a background runner.",
+    "OpenAI-authored campaigns route through one blocking project-scoped MCP transport call when this pack is installed.",
+    "The Director transports the order; a fresh Claude CLI process performs the independent review.",
     "Check availability with: node .codex/hooks/orchestra-review.js --doctor",
     "A failed Claude lane is REVIEW_UNAVAILABLE, never approval; route to the fresh-context native OpenAI reviewer and report the cross-family fallback."
   ]

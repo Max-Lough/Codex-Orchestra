@@ -1,5 +1,19 @@
 # Changelog
 
+## 3.0.2 — 2026-09-04
+
+- Route Claude review through an installer-managed project MCP registration,
+  avoiding Codex 0.153.x's dropped custom-agent MCP configuration.
+- Make review input scratch owner-only and atomically randomized, remove the
+  delayed process-group kill race, and cover cancellation and POSIX modes.
+- Centralize diagnostic credential redaction, cover JSON keys, Basic auth,
+  non-HTTP credential URLs, and case variants, and omit oversized diagnostics
+  instead of scanning multi-megabyte buffers.
+- Canonicalize managed text to LF before writing and hashing, while accepting
+  legacy CRLF receipt hashes during update and uninstall.
+- Manage only marked pack-owned blocks in `.codex/config.toml`, preserving all
+  other project configuration during install, update, deselection, and removal.
+
 ## 3.0.0 — 2026-09-02
 
 Codex-Orchestra is now the provider-inverted mirror of Claude-Orchestra 3.0.

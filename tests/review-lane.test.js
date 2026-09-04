@@ -88,8 +88,12 @@ process.stdin.on('end', () => {
   if (mode === 'empty') return;
   if (mode === 'whitespace') { process.stdout.write('  \\r\\n\\t'); return; }
   if (mode === 'diagnostic') {
-    console.log('diagnostic only; Bearer test-secret-token');
-    console.error('ANTHROPIC_API_KEY=sk-ant-super-secret-value');
+    console.log('diagnostic only; Bearer test-secret-token; Authorization: Basic dXNlcjpwYXNz; postgres://alice:url-secret@db.example/app');
+    console.error('ANTHROPIC_API_KEY=sk-ant-super-secret-value; {"password":"json-secret"}; SK-ANT-UPPERCASESECRET');
+    return;
+  }
+  if (mode === 'huge-diagnostic') {
+    console.error('x'.repeat(300000) + ' ANTHROPIC_API_KEY=tail-secret');
     return;
   }
   if (mode === 'retry' && count === 1) { console.log('not a verdict'); return; }
@@ -281,7 +285,9 @@ function caseUnavailableOutcomes() {
   check('unparseable response is unavailable', /REVIEW ENGINE: NONE/.test(bad.stdout) && /exactly one is required/.test(bad.stdout), bad.stdout);
   const diagnostic = invoke(fixture, common, { STUB_MODE: 'diagnostic' });
   check('malformed response preserves bounded diagnostics', /diagnostic only/.test(diagnostic.stdout) && /ANTHROPIC_API_KEY=\[REDACTED\]/.test(diagnostic.stdout), diagnostic.stdout);
-  check('malformed response redacts credentials', !/test-secret-token|super-secret-value/.test(diagnostic.stdout + diagnostic.stderr), diagnostic.stdout + diagnostic.stderr);
+  check('malformed response redacts all credential shapes', !/test-secret-token|dXNlcjpwYXNz|url-secret|super-secret-value|json-secret|UPPERCASESECRET/.test(diagnostic.stdout + diagnostic.stderr) && /Authorization: \[REDACTED\]/.test(diagnostic.stdout) && /postgres:\/\/\[REDACTED\]@/.test(diagnostic.stdout), diagnostic.stdout + diagnostic.stderr);
+  const hugeDiagnostic = invoke(fixture, common, { STUB_MODE: 'huge-diagnostic' });
+  check('oversized diagnostics are omitted without leaking their tail', /exceeded safe redaction scan cap/.test(hugeDiagnostic.stdout) && !/tail-secret/.test(hugeDiagnostic.stdout + hugeDiagnostic.stderr), hugeDiagnostic.stdout + hugeDiagnostic.stderr);
   const duplicate = invoke(fixture, common, { STUB_MODE: 'duplicate' });
   check('multiple verdicts are unavailable rather than ambiguous', /REVIEW ENGINE: NONE/.test(duplicate.stdout) && /2 parseable verdict lines/.test(duplicate.stdout), duplicate.stdout);
   const timeout = invoke(fixture, common.concat(['--timeout-ms', '50']), { STUB_MODE: 'timeout' }, 10000);

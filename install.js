@@ -30,6 +30,7 @@ const BEGIN = '<!-- ORCHESTRA:BEGIN (managed by Codex-Orchestra; edit the master
 const END = '<!-- ORCHESTRA:END -->';
 const HOOK_PACKAGE = Buffer.from('{"type":"commonjs"}\n', 'utf8');
 const SKIP_DIRS = new Set(['.git', '.codex', '.agents', 'node_modules', 'vendor', 'dist', 'build']);
+const MANAGED_TEXT_EXTENSIONS = new Set(['.cjs', '.js', '.json', '.md', '.mjs', '.toml']);
 
 function fatal(message) {
   console.error('ERROR: ' + message);
@@ -122,6 +123,23 @@ function managedNamespace(rel) {
 
 function fileHash(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function canonicalManagedContent(rel, value) {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  if (!MANAGED_TEXT_EXTENSIONS.has(path.extname(rel).toLowerCase())) return bytes;
+  return Buffer.from(bytes.toString('utf8').replace(/\r\n?/g, '\n'), 'utf8');
+}
+
+function managedHashCandidates(rel, value) {
+  const bytes = Buffer.isBuffer(value) ? value : Buffer.from(value);
+  const hashes = new Set([fileHash(bytes)]);
+  if (MANAGED_TEXT_EXTENSIONS.has(path.extname(rel).toLowerCase())) {
+    const canonical = canonicalManagedContent(rel, bytes);
+    hashes.add(fileHash(canonical));
+    hashes.add(fileHash(Buffer.from(canonical.toString('utf8').replace(/\n/g, '\r\n'), 'utf8')));
+  }
+  return hashes;
 }
 
 function readJsonStrict(file, optional, label) {
@@ -281,10 +299,16 @@ function sourceContext(root) {
   const packsDir = path.join(root, 'packs');
   const packNames = dirsIn(packsDir).filter((name) => fs.existsSync(path.join(packsDir, name, 'pack.json')));
   const packManifests = new Map();
+  const packConfigs = new Map();
   for (const name of packNames) {
     const manifest = readJsonStrict(path.join(packsDir, name, 'pack.json'), false, 'pack "' + name + '" pack.json');
     if (manifest.name !== name) fatal('Pack "' + name + '" must declare the matching name in pack.json.');
     packManifests.set(name, manifest);
+    const configFile = path.join(packsDir, name, 'config.toml');
+    if (fs.existsSync(configFile)) {
+      if (!fs.statSync(configFile).isFile()) fatal('Pack "' + name + '" config.toml must be a file.');
+      packConfigs.set(name, canonicalManagedContent('config.toml', readFileStrict(configFile)).toString('utf8'));
+    }
     directFiles(path.join(packsDir, name, 'agents'), '.toml').forEach(validateTomlAgent);
   }
 
@@ -306,7 +330,7 @@ function sourceContext(root) {
   if (version && !/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version)) {
     fatal('VERSION must be a semantic version or empty: ' + version);
   }
-  return { root, hooksJson, coreAgents, specialists, packsDir, packNames, packManifests, version };
+  return { root, hooksJson, coreAgents, specialists, packsDir, packNames, packManifests, packConfigs, version };
 }
 
 function flattenHookEntries(config) {
@@ -335,7 +359,8 @@ function addDesired(map, rel, source, content) {
     fatal('Installer sources collide at target path ' + normalized + ' (' + map.keys.get(collisionKey) + ' and ' + source + ').');
   }
   map.keys.set(collisionKey, source);
-  map.files.push({ rel: normalized, source, content: content == null ? readFileStrict(source) : content });
+  const bytes = content == null ? readFileStrict(source) : content;
+  map.files.push({ rel: normalized, source, content: canonicalManagedContent(normalized, bytes) });
 }
 
 function addTree(map, sourceDir, targetPrefix) {
@@ -412,6 +437,64 @@ function withManagedBlock(text, protocol, label) {
   return (clean ? clean + '\n\n' : '') + block + '\n';
 }
 
+function packConfigMarkers(name) {
+  return {
+    begin: '# ORCHESTRA:PACK:' + name + ':BEGIN (managed by Codex-Orchestra)',
+    end: '# ORCHESTRA:PACK:' + name + ':END',
+  };
+}
+
+function stripManagedPackConfig(text, label) {
+  const source = String(text || '').replace(/\r\n?/g, '\n');
+  const lines = source.split('\n');
+  const output = [];
+  let active = null;
+  let sawMarker = false;
+  for (const line of lines) {
+    const begin = /^# ORCHESTRA:PACK:([A-Za-z0-9._-]+):BEGIN \(managed by Codex-Orchestra\)$/.exec(line);
+    const end = /^# ORCHESTRA:PACK:([A-Za-z0-9._-]+):END$/.exec(line);
+    if (begin) {
+      if (active) fatal(label + ' has nested Orchestra pack config blocks. Refusing before writing anything.');
+      active = begin[1];
+      sawMarker = true;
+      continue;
+    }
+    if (end) {
+      if (!active || active !== end[1]) fatal(label + ' has an orphaned or mismatched Orchestra pack config marker. Refusing before writing anything.');
+      active = null;
+      continue;
+    }
+    if (!active) output.push(line);
+  }
+  if (active) fatal(label + ' has an unclosed Orchestra pack config block for ' + active + '. Refusing before writing anything.');
+  return { text: output.join('\n'), found: sawMarker };
+}
+
+function tableHeaders(text) {
+  return String(text || '').split(/\r?\n/).map((line) => line.trim())
+    .filter((line) => /^\[\[?[A-Za-z0-9_.-]+\]\]?$/.test(line));
+}
+
+function withManagedPackConfig(text, context, packs, label) {
+  const stripped = stripManagedPackConfig(text, label);
+  const fragments = packs.filter((name) => context.packConfigs.has(name));
+  if (!stripped.found && fragments.length === 0) return String(text || '');
+  let result = stripped.text.replace(/[ \t]*\n*$/, '');
+  const seenHeaders = new Set(tableHeaders(stripped.text));
+  for (const name of fragments) {
+    const fragment = context.packConfigs.get(name).replace(/^\s+|\s+$/g, '');
+    for (const header of tableHeaders(fragment)) {
+      if (seenHeaders.has(header)) {
+        fatal(label + ' already defines ' + header + ' outside the Orchestra-managed block. Refusing to create a duplicate TOML table.');
+      }
+      seenHeaders.add(header);
+    }
+    const markers = packConfigMarkers(name);
+    result += (result ? '\n\n' : '') + markers.begin + '\n' + fragment + '\n' + markers.end;
+  }
+  return result + '\n';
+}
+
 function preflightTarget(target, desired, uninstall) {
   const receiptFile = targetPath(target, RECEIPT_REL);
   const receipt = validateReceipt(readJsonStrict(receiptFile, true, 'target ' + RECEIPT_REL), 'target ' + RECEIPT_REL);
@@ -425,6 +508,9 @@ function preflightTarget(target, desired, uninstall) {
   markerParts(agentsText, 'target AGENTS.md');
   const configFile = targetPath(target, CONFIG_REL, false);
   if (!fs.existsSync(configFile)) assertUnaliasedTarget(target, configFile, CONFIG_REL);
+  const configText = fs.existsSync(configFile) ? fs.readFileSync(configFile, 'utf8') : '';
+  const configBlocks = stripManagedPackConfig(configText, 'target ' + CONFIG_REL);
+  if (configBlocks.found) assertUnaliasedTarget(target, configFile, CONFIG_REL);
 
   const priorFiles = new Set(receipt ? stringList(receipt.managedFiles, 'receipt.managedFiles').map(posix) : []);
   const legacyReceipt = !!receipt && !Array.isArray(receipt.managedFiles);
@@ -449,12 +535,12 @@ function preflightTarget(target, desired, uninstall) {
       fatal('Refusing to overwrite an unowned target path: ' + item.rel + '. Move it or uninstall its owner first.');
     }
   }
-  return { receipt, hooks, hooksFile, agentsFile, agentsText, configFile, priorFiles, legacyReceipt };
+  return { receipt, hooks, hooksFile, agentsFile, agentsText, configFile, configText, priorFiles, legacyReceipt };
 }
 
 function receiptOwnsCurrent(receipt, rel, file) {
   if (!receipt || !receipt.managedHashes || typeof receipt.managedHashes[rel] !== 'string') return false;
-  return fileHash(fs.readFileSync(file)) === receipt.managedHashes[rel];
+  return managedHashCandidates(rel, fs.readFileSync(file)).has(receipt.managedHashes[rel]);
 }
 
 function removeOne(entries, wanted) {
@@ -540,6 +626,13 @@ function install(context, target, packs, specialists) {
   const configSource = readFileStrict(path.join(context.root, 'config.toml'), 'source config.toml');
   const protocolText = stampedProtocol(context).toString('utf8');
   const hooksMerged = mergeHooks(context, state);
+  const originalConfig = fs.existsSync(state.configFile)
+    ? state.configText
+    : canonicalManagedContent(CONFIG_REL, configSource).toString('utf8');
+  const mergedConfig = withManagedPackConfig(originalConfig, context, packs, 'target ' + CONFIG_REL);
+  if (mergedConfig !== originalConfig && fs.existsSync(state.configFile)) {
+    assertUnaliasedTarget(target, state.configFile, CONFIG_REL);
+  }
 
   console.log('Installing Codex-Orchestra' + (context.version ? ' v' + context.version : '') + ' into: ' + target);
   const managedFiles = [];
@@ -571,9 +664,12 @@ function install(context, target, packs, specialists) {
   const configFile = state.configFile;
   if (!fs.existsSync(configFile)) {
     fs.mkdirSync(path.dirname(configFile), { recursive: true });
-    fs.writeFileSync(configFile, configSource);
-    note(CONFIG_REL + ' created (first-write-only; future installs leave it untouched)');
-  } else note(CONFIG_REL + ' already exists; left untouched');
+    fs.writeFileSync(configFile, mergedConfig, 'utf8');
+    note(CONFIG_REL + ' created; only marked Orchestra pack blocks are managed on later installs');
+  } else if (mergedConfig !== state.configText) {
+    fs.writeFileSync(configFile, mergedConfig, 'utf8');
+    note('updated marked Orchestra pack blocks in ' + CONFIG_REL + ' and preserved other settings');
+  } else note(CONFIG_REL + ' already current; non-Orchestra settings left untouched');
 
   writeJson(state.hooksFile, hooksMerged.config);
   note('merged Orchestra entries into ' + HOOKS_REL + ' without replacing foreign hooks');
@@ -634,6 +730,14 @@ function uninstall(context, target) {
     if (cleaned.trim()) fs.writeFileSync(state.agentsFile, cleaned, 'utf8');
     else fs.unlinkSync(state.agentsFile);
     note('removed the managed Orchestra block from AGENTS.md');
+  }
+  if (state.receipt && fs.existsSync(state.configFile)) {
+    const cleanedConfig = withManagedPackConfig(state.configText, context, [], 'target ' + CONFIG_REL);
+    if (cleanedConfig !== state.configText) {
+      assertUnaliasedTarget(target, state.configFile, CONFIG_REL);
+      fs.writeFileSync(state.configFile, cleanedConfig, 'utf8');
+      note('removed managed Orchestra pack blocks from ' + CONFIG_REL);
+    }
   }
   const receiptFile = targetPath(target, RECEIPT_REL);
   if (fs.existsSync(receiptFile)) fs.unlinkSync(receiptFile);

@@ -1,0 +1,12 @@
+[mcp_servers.orchestra_claude_review]
+command = "node"
+args = [".codex/hooks/orchestra-review-mcp.js"]
+startup_timeout_sec = 15
+tool_timeout_sec = 7200
+required = true
+enabled_tools = ["orchestra_review"]
+default_tools_approval_mode = "auto"
+
+[mcp_servers.orchestra_claude_review.tools.orchestra_review]
+approval_mode = "auto"
+output_token_limit = 131072
