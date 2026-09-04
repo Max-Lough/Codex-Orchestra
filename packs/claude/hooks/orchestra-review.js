@@ -14,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const { boundedDiagnostic, redactDiagnostic } = require('./orchestra-redact');
 
 const DEFAULTS = Object.freeze({
   bin: 'claude',
@@ -218,21 +219,6 @@ function commandFailure(result) {
   return '';
 }
 
-function redactDiagnostic(value) {
-  return String(value || '')
-    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [REDACTED]')
-    .replace(/\bsk-(?:ant-)?[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
-    .replace(/((?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|AUTHORIZATION)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
-    .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@')
-    .replace(/\u0000/g, '');
-}
-
-function boundedDiagnostic(value, limit) {
-  const clean = redactDiagnostic(value).trim();
-  if (!clean) return '';
-  return clean.length > limit ? '[truncated] ' + clean.slice(-limit) : clean;
-}
-
 function commandDiagnostics(result) {
   const stderr = boundedDiagnostic(result && result.stderr, 2000);
   const stdout = boundedDiagnostic(result && result.stdout, 2000);
@@ -253,7 +239,7 @@ function authSummary(value) {
   } catch (_) {
     // Older Claude CLIs may return a human-readable status instead of JSON.
   }
-  return redactDiagnostic(text.split(/\r?\n/)[0]);
+  return boundedDiagnostic(text.split(/\r?\n/)[0], 2000);
 }
 
 function probeClaude(cfg) {
@@ -566,7 +552,7 @@ function unavailable(detail, attempts, maximum, integrityPaths) {
       ? 'INTEGRITY WARNING: the review checkout changed: ' + integrityPaths.join(', ') + '\n'
       : '') +
     '\nVERDICT: REVIEW_UNAVAILABLE\n\n' +
-    'DETAIL\n- ' + oneLine(redactDiagnostic(detail)) + '\n\n' +
+    'DETAIL\n- ' + oneLine(boundedDiagnostic(detail, 2000)) + '\n\n' +
     'NEXT\n- Run `node .codex/hooks/orchestra-review.js --doctor`; then retry or use the native OpenAI reviewer and report that Claude did not review.\n'
   );
 }
@@ -581,7 +567,7 @@ function main() {
     if (args.doctor) {
       process.stdout.write(
         'CLAUDE REVIEW DOCTOR: NEEDS ATTENTION\n' +
-        'DETAIL: ' + oneLine(redactDiagnostic(error.message)) + '\n' +
+        'DETAIL: ' + oneLine(boundedDiagnostic(error.message, 2000)) + '\n' +
         'NEXT: repair .codex/orchestra.json or the reported Claude review setting.\n'
       );
       process.exitCode = 1;

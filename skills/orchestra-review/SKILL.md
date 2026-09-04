@@ -1,6 +1,6 @@
 ---
 name: orchestra-review
-description: "Run an Orchestra-grade adversarial review of existing changes, a branch, or a commit range. Routes OpenAI-authored work to reviewer-claude when installed and available; Anthropic-authored work and Claude-unavailable fallback go to the fresh native Sol reviewer. Use for requested reviews and changes that arrived outside the normal campaign loop."
+description: "Run an Orchestra-grade adversarial review of existing changes, a branch, or a commit range. Routes OpenAI-authored work through the installed project-scoped Claude review MCP transport; Anthropic-authored work and Claude-unavailable fallback go to the fresh native Sol reviewer. Use for requested reviews and changes that arrived outside the normal campaign loop."
 ---
 
 # Orchestra review
@@ -21,10 +21,12 @@ the review or applies fixes itself.
    committed change in a moving live tree. Do not silently commit arbitrary
    on-demand changes; for an uncommitted review, name exact diff commands and
    require the live tree to remain idle.
-3. **Choose the reviewer.** OpenAI-authored work → `reviewer-claude` when the
-   Claude pack is installed. Anthropic-authored work → fresh native `reviewer`.
-   Without the pack, use native `reviewer` and report once that cross-family
-   review is not installed.
+3. **Choose the reviewer.** OpenAI-authored work → call
+   `mcp__orchestra_claude_review__orchestra_review` exactly once when the Claude
+   pack is installed. This is a Director transport call; the fresh Claude CLI
+   process performs the independent review. Anthropic-authored work → fresh
+   native `reviewer`. Without the pack, use native `reviewer` and report once
+   that cross-family review is not installed.
 4. **Write a self-contained review order** containing:
    - **OUTCOME/INTENT:** what the change claims to accomplish.
    - **SCOPE:** exact refs, diff commands, and paths.
@@ -36,9 +38,12 @@ the review or applies fixes itself.
      otherwise exact relevant checks.
    - **CONSTRAINTS:** timeouts, prohibited commands, and warmup needs as real
      runner arguments where supported; prose alone configures nothing.
-5. **Dispatch and relay.** The reviewer independently reads the diff and reruns
-   verification. Preserve every finding, engine attribution, integrity warning,
-   attempted settings, and finality line.
+5. **Dispatch and relay.** For the Claude route, pass `work_order`,
+   `executor_report`, and every explicit control as typed MCP arguments, wait
+   for the single blocking call, and relay the returned text verbatim. The
+   reviewer independently reads the diff and reruns verification. Preserve
+   every finding, engine attribution, integrity warning, attempted setting,
+   and finality line.
 6. **Fail loudly.** If the installed Claude lane returns
    `REVIEW_UNAVAILABLE`, immediately show exactly:
 

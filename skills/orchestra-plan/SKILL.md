@@ -34,8 +34,9 @@ narrow plan exception. It never implements repository work.
    performed by both executor and reviewer.
 7. **Schedule campaign review.** At least one independent checkpoint must occur
    before final report, handoff, merge, release, or deploy. OpenAI-authored work
-   routes to `reviewer-claude` when the Claude pack is installed; Anthropic-
-   authored work and Claude-unavailable fallback route to fresh native
+   routes through the project-scoped Claude review MCP transport when the
+   Claude pack is installed; Anthropic-authored work and Claude-unavailable
+   fallback route to fresh native
    `reviewer`. Require exact base/head refs for committed checkpoints.
 8. **Add cadence only where needed.** A deliberately bundled long order carries
    numbered parts, a named progress file, checkpoint commits when authorized,

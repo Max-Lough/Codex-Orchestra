@@ -23,19 +23,22 @@ the Claude lane fails, that is a visible fallback condition, not approval.
 ```text
 packs/<name>/
 |-- pack.json
+|-- config.toml                 optional project-scoped config block
 |-- agents/*.toml
 |-- hooks/*.js
 |-- skills/<skill>/
 `-- README.md
 ```
 
-The installer discovers files from these directories. Pack filenames must not
-collide with core harness files or another selected pack.
+The installer discovers files from these directories. It wraps `config.toml`
+in pack-specific markers inside the target `.codex/config.toml`; other project
+settings remain user-owned. Pack filenames and config tables must not collide
+with core harness files, another selected pack, or foreign project config.
 
 Every external runner must degrade explicitly: a missing dependency, timeout,
 transport error, or malformed response returns a named `*_UNAVAILABLE` result.
-Pack launchers relay the external result; they do not replace it with their own
-judgment.
+Pack transports and launchers relay the external result; they do not replace it
+with their own judgment.
 
 To create a pack, copy `_TEMPLATE/`, set `pack.json.name` to the directory name,
 and add uniquely named profiles, hooks, and orchestration-class skills.

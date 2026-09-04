@@ -6,14 +6,14 @@
  * The server exposes one read-only tool. It serializes typed review inputs to
  * temporary files, waits for orchestra-review.js to close, and returns the
  * runner's stdout byte-for-byte. Transport failures are normal, explicit
- * REVIEW_UNAVAILABLE reports so a thin launcher never has to invent a verdict.
+ * REVIEW_UNAVAILABLE reports so the Director only has to relay the result.
  */
 
-const crypto = require('crypto');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
+const { boundedDiagnostic, redactDiagnostic } = require('./orchestra-redact');
 
 const SERVER_NAME = 'orchestra-claude-review';
 // Keep a complete successful report below the custom agent's MCP tool-output
@@ -23,7 +23,6 @@ const DIAGNOSTIC_CAP = 4000;
 const DEFAULT_REVIEW_TIMEOUT_MS = 1800000;
 const DEFAULT_PROBE_TIMEOUT_MS = 90000;
 const DEFAULT_RETRIES = 1;
-const KILL_GRACE_MS = 3000;
 const TASKKILL_TIMEOUT_MS = 5000;
 
 function resolveRoot() {
@@ -49,7 +48,6 @@ const HOOKS_DIR = process.env.ORCHESTRA_MCP_HOOKS_DIR
   ? path.resolve(process.env.ORCHESTRA_MCP_HOOKS_DIR)
   : __dirname;
 const RUNNER = path.join(HOOKS_DIR, 'orchestra-review.js');
-const SCRATCH_BASE = path.join(os.tmpdir(), 'codex-orchestra-review-mcp');
 
 function positiveInteger(value) {
   const parsed = Number(value);
@@ -111,18 +109,8 @@ function oneLine(value) {
   return String(value || '').replace(/[\r\n]+/g, ' / ').trim();
 }
 
-function redact(value) {
-  return String(value || '')
-    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [REDACTED]')
-    .replace(/\bsk-(?:ant-)?[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
-    .replace(/((?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|AUTHORIZATION)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
-    .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@');
-}
-
 function diagnosticTail(value, cap) {
-  const clean = redact(value).replace(/\u0000/g, '');
-  if (!clean) return '';
-  return clean.length > cap ? '[truncated] ' + clean.slice(-cap) : clean;
+  return boundedDiagnostic(value, cap, cap * 4);
 }
 
 function quotedDiagnostic(label, value) {
@@ -137,7 +125,7 @@ function unavailableReport(reason, diagnostics) {
     'REVIEW ENGINE: NONE - no verdict produced (attempted: Claude CLI, cross-vendor)\n' +
     'FINALITY: FINAL (transport completed; no later verdict will be produced by this call)\n\n' +
     'VERDICT: REVIEW_UNAVAILABLE\n\n' +
-    'DETAIL\n- Claude review transport: ' + oneLine(redact(reason)).slice(0, 2000) + '\n' +
+    'DETAIL\n- Claude review transport: ' + oneLine(boundedDiagnostic(reason, 2000)) + '\n' +
     (blocks.length ? '\nDIAGNOSTICS (bounded and redacted)\n' + blocks.join('\n') + '\n' : '') +
     '\nNEXT\n- Run `node .codex/hooks/orchestra-review.js --doctor`; then retry or use the native OpenAI reviewer and report that Claude did not review.\n'
   );
@@ -147,12 +135,9 @@ function returnUnavailable(id, reason, diagnostics) {
   textResult(id, unavailableReport(reason, diagnostics));
 }
 
-let runSequence = 0;
 function makeRunDir() {
-  fs.mkdirSync(SCRATCH_BASE, { recursive: true });
-  const suffix = crypto.randomBytes(6).toString('hex');
-  const dir = path.join(SCRATCH_BASE, 'review-' + process.pid + '-' + (++runSequence) + '-' + suffix);
-  fs.mkdirSync(dir, { recursive: true });
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-orchestra-review-mcp-'));
+  if (process.platform !== 'win32') fs.chmodSync(dir, 0o700);
   return dir;
 }
 
@@ -161,22 +146,10 @@ function removeRunDir(dir) {
   try { fs.rmSync(dir, { recursive: true, force: true }); } catch (_) { /* best effort */ }
 }
 
-function sweepStaleRunDirs() {
-  try {
-    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-    for (const entry of fs.readdirSync(SCRATCH_BASE, { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const target = path.join(SCRATCH_BASE, entry.name);
-      try {
-        if (fs.statSync(target).mtimeMs < cutoff) fs.rmSync(target, { recursive: true, force: true });
-      } catch (_) { /* best effort */ }
-    }
-  } catch (_) { /* nothing to sweep */ }
-}
-
 function writeInput(dir, name, content) {
   const file = path.join(dir, name);
-  fs.writeFileSync(file, content, 'utf8');
+  fs.writeFileSync(file, content, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  if (process.platform !== 'win32') fs.chmodSync(file, 0o600);
   return file;
 }
 
@@ -227,7 +200,7 @@ function buildRunnerArgs(input, dir) {
 
 const IN_FLIGHT = new Map();
 
-function killTree(run, immediate) {
+function killTree(run) {
   if (!run || !run.child || !run.child.pid) return;
   const child = run.child;
   if (child.exitCode !== null || child.signalCode !== null) {
@@ -268,26 +241,15 @@ function killTree(run, immediate) {
       return false;
     }
   };
-  if (immediate) {
-    run.treeConfirmed = signalGroup('SIGKILL');
-    run.killOutcome = run.treeConfirmed
-      ? 'SIGKILL was sent to the runner process group'
-      : 'only the direct runner process could be signalled';
-    return;
-  }
-  run.treeConfirmed = signalGroup('SIGTERM');
+  run.treeConfirmed = signalGroup('SIGKILL');
   run.killOutcome = run.treeConfirmed
-    ? 'SIGTERM was sent to the runner process group'
+    ? 'SIGKILL was sent to the runner process group'
     : 'only the direct runner process could be signalled';
-  if (!run.killTimer) {
-    run.killTimer = setTimeout(() => signalGroup('SIGKILL'), KILL_GRACE_MS);
-    if (typeof run.killTimer.unref === 'function') run.killTimer.unref();
-  }
 }
 
 function drainInFlight() {
   for (const run of IN_FLIGHT.values()) {
-    try { killTree(run, true); } catch (_) { /* process teardown */ }
+    try { killTree(run); } catch (_) { /* process teardown */ }
     removeRunDir(run.dir);
   }
   IN_FLIGHT.clear();
@@ -344,7 +306,6 @@ function runReview(id, runnerArgs, progressToken, dir) {
     cancelReason: '',
     killOutcome: '',
     treeConfirmed: false,
-    killTimer: null,
     answered: false,
   };
   IN_FLIGHT.set(id, run);
@@ -543,14 +504,13 @@ function handleMessage(line) {
 
   try {
     if (method === 'initialize') {
-      sweepStaleRunDirs();
       send({
         jsonrpc: '2.0',
         id,
         result: {
           protocolVersion: params.protocolVersion || '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: SERVER_NAME, version: '3.0.1' },
+          serverInfo: { name: SERVER_NAME, version: '3.0.2' },
           instructions: 'Call orchestra_review exactly once per review. It blocks through runner completion. Relay its text exactly; never reinterpret a verdict or retry REVIEW_UNAVAILABLE.',
         },
       });

@@ -26,7 +26,7 @@ is reported complete.
 | Heavy executor | `executor-heavy` | GPT-5.6 Sol / high | hard or escalated implementation |
 | Deep executor | `executor-heavy-xhigh` | GPT-5.6 Sol / xhigh | the hardest split-resistant implementation |
 | Native reviewer | `reviewer` | GPT-5.6 Sol / max | fresh-context fallback; primary review of Anthropic-authored work |
-| Claude reviewer | `reviewer-claude` | OpenAI launcher -> Claude | default independent review of OpenAI-authored work |
+| Claude reviewer | project MCP -> Claude CLI | `claude` pack | default independent review of OpenAI-authored work |
 
 The Claude reviewer is installed by the optional `claude` pack. Without it,
 the harness remains usable and routes review to the fresh native reviewer,
@@ -108,7 +108,7 @@ The per-harness pause files (`.claude/orchestra.pause` and
 |-- AGENTS.md                         managed Orchestra block; user text preserved
 |-- .codex/
 |   |-- ORCHESTRA.md                  version-stamped protocol copy
-|   |-- config.toml                   recommended scaffold; written once
+|   |-- config.toml                   user settings plus marked pack MCP blocks
 |   |-- hooks.json                    Orchestra entries merged with user hooks
 |   |-- orchestra-install.json        hashed ownership, pack, and specialist receipt
 |   |-- agents/
@@ -118,7 +118,6 @@ The per-harness pause files (`.claude/orchestra.pause` and
 |   |   |-- executor-heavy.toml
 |   |   |-- executor-heavy-xhigh.toml
 |   |   |-- reviewer.toml
-|   |   `-- reviewer-claude.toml      with the claude pack
 |   `-- hooks/
 |       |-- package.json              forces CommonJS beneath ESM projects
 |       |-- orchestra-guard.js
@@ -137,7 +136,8 @@ their own independent project setup if a project intentionally uses both.
 
 Review follows authorship, not a project-level opt-out switch:
 
-- OpenAI-authored work uses `reviewer-claude` when the pack is installed.
+- OpenAI-authored work uses the project-scoped Claude review MCP transport when
+  the pack is installed.
 - Anthropic-authored work uses the fresh native `reviewer` so author and
   reviewer remain in different model families.
 - If the pack is absent, the native reviewer runs and the final report notes
@@ -155,7 +155,7 @@ detached worktree outside the repository so the review is pinned to the commit
 that will ship. An explicitly uncommitted review uses the live tree and checks
 that the tree did not change during review.
 
-The thin launcher makes one typed call to the project-scoped
+The Director makes one typed call to the project-scoped
 `orchestra_claude_review.orchestra_review` MCP tool. That transport blocks until
 the runner closes and relays a valid report byte-for-byte. Empty stdout,
 abnormal exit, timeout/cancellation, or malformed output is converted to an
@@ -240,13 +240,15 @@ Delete the file or clear the variable to resume. Use `--uninstall` for removal.
 ## Packs, skills, and specialists
 
 Packs are optional dependency bundles beneath `packs/`. A pack may contribute
-TOML profiles, hook runners, and project skills. Missing pack dependencies must
-produce explicit unavailable results without breaking the core harness.
+TOML profiles, hook runners, project-scoped MCP configuration, and project
+skills. The installer owns only marked pack blocks in `.codex/config.toml` and
+preserves every other project setting. Missing pack dependencies must produce
+explicit unavailable results without breaking the core harness.
 
 The `claude` pack provides:
 
-- `reviewer-claude`, a thin OpenAI launcher for independent Claude review;
-- the blocking MCP transport plus pinned review runner and doctor;
+- the project-scoped blocking MCP transport plus pinned Claude review runner
+  and doctor;
 - `planner-claude` and its planning counterpart for optional cross-vendor plan
   critique.
 

@@ -20,9 +20,11 @@ through one read-only scout mission carrying the checklist below.
 4. **Company:** presence of `scout.toml`, `detective.toml`, `executor.toml`,
    `executor-heavy.toml`, `executor-heavy-xhigh.toml`, and `reviewer.toml` under
    `.codex/agents/`; list other TOML profiles as specialists or pack roles.
-5. **Pack:** `.codex/orchestra-install.json` recorded packs/specialists and
-   whether `reviewer-claude.toml`, `.codex/hooks/orchestra-review-mcp.js`, and
-   `.codex/hooks/orchestra-review.js` all exist.
+5. **Pack:** `.codex/orchestra-install.json` recorded packs/specialists,
+   whether `.codex/config.toml` contains the managed
+   `orchestra_claude_review` MCP block, and whether
+   `.codex/hooks/orchestra-review-mcp.js` plus
+   `.codex/hooks/orchestra-review.js` exist.
 6. **Skills:** directories under `.agents/skills/`, including the core
    `orchestra-plan`, `orchestra-review`, and `orchestra-status` skills.
 7. **Config:** from `.codex/orchestra.json`, or defaults when absent: verification
@@ -42,7 +44,7 @@ Mode:         DIRECTOR | PAUSED
 Enforcement:  active | paused (.codex/orchestra.pause) | paused (ORCHESTRA_PAUSE=1) | guard not wired
 Protocol:     .codex/ORCHESTRA.md <present (vX.Y.Z|unversioned)|MISSING> · AGENTS.md block <present|MISSING>
 Company:      scout <✓|✗> detective <✓|✗> executor <✓|✗> executor-heavy <✓|✗> executor-heavy-xhigh <✓|✗> reviewer <✓|✗> · specialists: <names|none>
-Packs:        <names|none> · reviewer-claude <✓|✗>
+Packs:        <names|none> · Claude review MCP <✓|✗>
 Skills:       <names|none>
 Review route: OpenAI-authored → Claude <available|UNAVAILABLE|pack not installed> · Anthropic-authored → native Sol
 Claude config: model <id|default> · effort <level|default> · timeout <ms|default> · doNotRun <n>

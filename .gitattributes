@@ -2,4 +2,5 @@
 *.sh text eol=lf
 *.js text eol=lf
 *.md text eol=lf
+*.toml text eol=lf
 *.ps1 text eol=crlf

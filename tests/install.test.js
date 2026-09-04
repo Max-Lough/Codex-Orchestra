@@ -115,6 +115,10 @@ function makeMaster() {
     name: 'claude',
     title: 'Anthropic review pack',
   });
+  write(
+    path.join(root, 'packs', 'claude', 'config.toml'),
+    '[mcp_servers.orchestra_claude_review]\ncommand = "node"\nargs = [".codex/hooks/orchestra-review-mcp.js"]\n'
+  );
   write(path.join(root, 'packs', 'claude', 'agents', 'reviewer-claude.toml'), 'name = "reviewer-claude"\nmodel = "claude-opus-4-1"\n');
   write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-review.js'), "'use strict';\n");
   write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-review-mcp.js'), "'use strict';\n");
@@ -173,13 +177,19 @@ function case1_roundTripAndEsm() {
   check('generated hook package declares commonjs', readJson(path.join(target, '.codex', 'hooks', 'package.json')).type === 'commonjs', '');
 }
 
-function case2_idempotenceAndFirstWriteConfig() {
-  section('2. Re-run is idempotent, inherits selections, and never rewrites project config');
+function case2_idempotenceAndManagedPackConfig() {
+  section('2. Re-run is idempotent, inherits selections, and manages only marked pack config');
   const master = makeMaster();
   const target = temp('codex-orchestra-target-');
   const first = run(master, [target, '--packs', 'claude', '--specialists', 'modeler']);
   check('initial selected install succeeds', first.status === 0, output(first));
-  write(path.join(target, '.codex', 'config.toml'), '# user-owned now\ncustom = true\n');
+  write(
+    path.join(target, '.codex', 'config.toml'),
+    '# user-owned now\ncustom = true\n\n' +
+      '# ORCHESTRA:PACK:claude:BEGIN (managed by Codex-Orchestra)\n' +
+      '[mcp_servers.orchestra_claude_review]\ncommand = "stale"\n' +
+      '# ORCHESTRA:PACK:claude:END\n'
+  );
   write(path.join(target, 'AGENTS.md'), fs.readFileSync(path.join(target, 'AGENTS.md'), 'utf8') + '\nUser tail.\n');
   const hooks = readJson(path.join(target, '.codex', 'hooks.json'));
   hooks.hooks.UserPromptSubmit = [hookEntry('node tools/user.js', 'User hook')];
@@ -189,11 +199,17 @@ function case2_idempotenceAndFirstWriteConfig() {
   check('plain re-run succeeds', second.status === 0, output(second));
   const receipt = readJson(path.join(target, '.codex', 'orchestra-install.json'));
   check('plain re-run inherits pack and specialist selections', JSON.stringify(receipt.packs) === '["claude"]' && JSON.stringify(receipt.specialists) === '["modeler"]', JSON.stringify(receipt));
-  check('first-write-only config is byte-preserved', fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8') === '# user-owned now\ncustom = true\n', '');
+  const config = fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8');
+  check('user config outside the managed block is preserved', config.includes('# user-owned now\ncustom = true'), config);
+  check('managed pack config is refreshed exactly once', (config.match(/ORCHESTRA:PACK:claude:BEGIN/g) || []).length === 1 && config.includes('command = "node"') && !config.includes('command = "stale"'), config);
   const agents = fs.readFileSync(path.join(target, 'AGENTS.md'), 'utf8');
   check('managed block is not duplicated and user tail survives', (agents.match(/ORCHESTRA:BEGIN/g) || []).length === 1 && agents.includes('User tail.'), agents);
   const hooksAfter = readJson(path.join(target, '.codex', 'hooks.json'));
   check('managed hook is not duplicated and foreign hook survives', ownHookCount(hooksAfter) === 1 && hooksAfter.hooks.UserPromptSubmit.length === 1, JSON.stringify(hooksAfter));
+
+  const third = run(master, [target]);
+  const thirdConfig = fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8');
+  check('second re-run keeps one stable MCP block', third.status === 0 && thirdConfig === config, output(third) + thirdConfig);
 
   const compatTarget = temp('codex-orchestra-target-');
   const compat = runCompat(master, [compatTarget, '--no-packs']);
@@ -209,6 +225,7 @@ function case3DeselectRetireAndUninstall() {
   writeJson(path.join(target, '.codex', 'hooks.json'), { hooks: { PreToolUse: [foreignHook] } });
   const installed = run(master, [target, '--packs', 'claude', '--specialists', 'modeler']);
   check('selected install succeeds', installed.status === 0, output(installed));
+  check('selected pack installs its project-scoped MCP block', /ORCHESTRA:PACK:claude:BEGIN/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')), fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8'));
   const retiredTarget = path.join(target, '.codex', 'agents', 'reviewer-claude.toml');
   check('pack agent, blocking transport, and nested pack skill installed', fs.existsSync(retiredTarget) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan', 'references', 'protocol.md')), census(target).join('\n'));
   write(path.join(target, '.codex', 'agents', 'user-owned.toml'), 'name = "user-owned"\n');
@@ -221,6 +238,7 @@ function case3DeselectRetireAndUninstall() {
   const deselect = run(master, [target, '--no-packs', '--no-specialists']);
   check('explicit deselection succeeds', deselect.status === 0, output(deselect));
   check('pack hooks, skill, and specialist are removed', !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && !fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan')) && !fs.existsSync(path.join(target, '.codex', 'agents', 'modeler.toml')), census(target).join('\n'));
+  check('pack deselection removes only its managed config block', !/ORCHESTRA:PACK:claude/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')) && /gpt-5\.6-sol/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')), fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8'));
   check('unknown adjacent file survives pruning', fs.existsSync(path.join(target, '.codex', 'agents', 'user-owned.toml')), '');
 
   const uninstall = run(master, [target, '--uninstall']);
@@ -250,6 +268,20 @@ function case4MalformedAtomicityAndCollisions() {
   const malformed = run(master, [malformedTarget]);
   check('malformed target JSON refuses', malformed.status !== 0 && /not valid JSON/.test(output(malformed)), output(malformed));
   check('malformed target refusal is atomic', JSON.stringify(census(malformedTarget)) === JSON.stringify(before), 'before=' + before + ' after=' + census(malformedTarget));
+
+  const malformedConfigTarget = temp('codex-orchestra-target-');
+  write(path.join(malformedConfigTarget, '.codex', 'config.toml'), '# ORCHESTRA:PACK:claude:BEGIN (managed by Codex-Orchestra)\n[mcp_servers.orchestra_claude_review]\n');
+  write(path.join(malformedConfigTarget, 'sentinel.txt'), 'keep');
+  const malformedConfigBefore = census(malformedConfigTarget);
+  const malformedConfig = run(master, [malformedConfigTarget, '--packs', 'claude']);
+  check('unclosed managed config block refuses before writes', malformedConfig.status !== 0 && /unclosed Orchestra pack config block/.test(output(malformedConfig)), output(malformedConfig));
+  check('managed config refusal is atomic', JSON.stringify(census(malformedConfigTarget)) === JSON.stringify(malformedConfigBefore), census(malformedConfigTarget).join('\n'));
+
+  const duplicateConfigTarget = temp('codex-orchestra-target-');
+  write(path.join(duplicateConfigTarget, '.codex', 'config.toml'), '[mcp_servers.orchestra_claude_review]\ncommand = "mine"\n');
+  const duplicateConfig = run(master, [duplicateConfigTarget, '--packs', 'claude']);
+  check('foreign duplicate MCP table refuses before writes', duplicateConfig.status !== 0 && /duplicate TOML table/.test(output(duplicateConfig)), output(duplicateConfig));
+  check('foreign duplicate refusal does not create a receipt', !fs.existsSync(path.join(duplicateConfigTarget, '.codex', 'orchestra-install.json')), census(duplicateConfigTarget).join('\n'));
 
   const badSource = makeMaster();
   write(path.join(badSource, 'packs', 'claude', 'pack.json'), '{broken');
@@ -309,7 +341,7 @@ function case4MalformedAtomicityAndCollisions() {
   fs.mkdirSync(path.join(configLinkTarget, '.codex'), { recursive: true });
   fs.linkSync(externalConfig, path.join(configLinkTarget, '.codex', 'config.toml'));
   const configLinkInstall = run(master, [configLinkTarget, '--no-packs']);
-  check('existing hardlinked first-write-only config does not cause a partial install', configLinkInstall.status === 0 && fs.existsSync(path.join(configLinkTarget, '.codex', 'agents', 'scout.toml')) && fs.readFileSync(externalConfig, 'utf8') === '# shared project config\ncustom = true\n', output(configLinkInstall));
+  check('existing hardlinked config is untouched when no pack block changes', configLinkInstall.status === 0 && fs.existsSync(path.join(configLinkTarget, '.codex', 'agents', 'scout.toml')) && fs.readFileSync(externalConfig, 'utf8') === '# shared project config\ncustom = true\n', output(configLinkInstall));
 
   const modifiedTarget = temp('codex-orchestra-target-');
   const modifiedInstall = run(master, [modifiedTarget, '--no-packs']);
@@ -385,6 +417,30 @@ function case6ClaimsPreexistingHookEntries() {
   );
 }
 
+function case7CanonicalLineEndingsAndLegacyHashes() {
+  section('7. Managed text is canonical LF and legacy CRLF receipts remain removable');
+  const master = makeMaster();
+  const sourceAgent = path.join(master, 'agents', 'scout.toml');
+  const lf = 'name = "scout"\nmodel = "gpt-5.6-luna"\n';
+  const crlf = lf.replace(/\n/g, '\r\n');
+  fs.writeFileSync(sourceAgent, crlf, 'utf8');
+  const target = temp('codex-orchestra-target-');
+  const installed = run(master, [target, '--no-packs', '--no-specialists']);
+  check('CRLF source install succeeds', installed.status === 0, output(installed));
+  const targetAgent = path.join(target, '.codex', 'agents', 'scout.toml');
+  const installedBytes = fs.readFileSync(targetAgent);
+  const receiptFile = path.join(target, '.codex', 'orchestra-install.json');
+  const receipt = readJson(receiptFile);
+  check('managed TOML is written as LF', installedBytes.toString('utf8') === lf && !installedBytes.includes(13), JSON.stringify(installedBytes.toString('utf8')));
+  check('receipt hashes the exact canonical LF bytes', receipt.managedHashes['.codex/agents/scout.toml'] === hash(installedBytes), JSON.stringify(receipt.managedHashes));
+
+  receipt.managedHashes['.codex/agents/scout.toml'] = hash(Buffer.from(crlf, 'utf8'));
+  writeJson(receiptFile, receipt);
+  fs.unlinkSync(sourceAgent);
+  const updated = run(master, [target]);
+  check('legacy CRLF receipt recognizes an LF-equivalent managed file', updated.status === 0 && !fs.existsSync(targetAgent) && /pruned retired\/deselected managed file/.test(output(updated)), output(updated));
+}
+
 function case5LintAndScanUpdate() {
   section('5. Source lint and receipt-based scan/update');
   const master = makeMaster();
@@ -410,11 +466,12 @@ function case5LintAndScanUpdate() {
 
 try {
   case1_roundTripAndEsm();
-  case2_idempotenceAndFirstWriteConfig();
+  case2_idempotenceAndManagedPackConfig();
   case3DeselectRetireAndUninstall();
   case4MalformedAtomicityAndCollisions();
   case5LintAndScanUpdate();
   case6ClaimsPreexistingHookEntries();
+  case7CanonicalLineEndingsAndLegacyHashes();
 } catch (error) {
   check('suite completed without an uncaught exception', false, error && error.stack ? error.stack : error);
 }

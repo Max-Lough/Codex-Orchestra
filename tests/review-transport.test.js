@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 /**
- * Regression tests for the blocking reviewer-claude MCP transport.
+ * Regression tests for the blocking project-scoped Claude review transport.
  * A tiny runner stub exercises process completion independently of Claude.
  */
 
@@ -13,6 +13,7 @@ const { spawn } = require('child_process');
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = process.env.ORCHESTRA_TEST_TRANSPORT ||
   path.join(ROOT, 'packs', 'claude', 'hooks', 'orchestra-review-mcp.js');
+const SERVER_SOURCE = fs.readFileSync(SERVER, 'utf8');
 const cleanups = [];
 let passed = 0;
 let failed = 0;
@@ -55,10 +56,15 @@ const value = (flag) => {
 };
 const mode = process.env.STUB_RUNNER_MODE || 'approve';
 if (process.env.STUB_RUNNER_RECORD) {
+  const workOrderPath = value('--work-order');
+  const executorReportPath = value('--executor-report');
   fs.writeFileSync(process.env.STUB_RUNNER_RECORD, JSON.stringify({
     args,
-    workOrder: fs.readFileSync(value('--work-order'), 'utf8'),
-    executorReport: fs.readFileSync(value('--executor-report'), 'utf8'),
+    workOrder: fs.readFileSync(workOrderPath, 'utf8'),
+    executorReport: fs.readFileSync(executorReportPath, 'utf8'),
+    runDirMode: fs.statSync(require('path').dirname(workOrderPath)).mode & 0o777,
+    workOrderMode: fs.statSync(workOrderPath).mode & 0o777,
+    executorReportMode: fs.statSync(executorReportPath).mode & 0o777,
     cwd: process.cwd(),
     projectDir: process.env.CODEX_PROJECT_DIR || '',
   }, null, 2));
@@ -66,7 +72,11 @@ if (process.env.STUB_RUNNER_RECORD) {
 if (mode === 'empty') process.exit(0);
 if (mode === 'whitespace') { process.stdout.write('  \\r\\n\\t'); process.exit(0); }
 if (mode === 'nonzero') {
-  console.error('transport failed; Bearer visible-secret-token; ANTHROPIC_API_KEY=sk-ant-visible-secret');
+  console.error('transport failed; Bearer visible-secret-token; Authorization: Basic dXNlcjpwYXNz; ANTHROPIC_API_KEY=sk-ant-visible-secret; {"password":"json-secret"}; postgres://alice:url-secret@db.example/app; SK-ANT-UPPERCASESECRET');
+  process.exit(9);
+}
+if (mode === 'huge-diagnostic') {
+  console.error('x'.repeat(300000) + ' ANTHROPIC_API_KEY=tail-secret');
   process.exit(9);
 }
 if (mode === 'malformed') {
@@ -211,7 +221,9 @@ async function main() {
   check('malformed diagnostics are redacted', !/sk-visible-secret/.test(textOf(malformed)) && /OPENAI_API_KEY=\[REDACTED\]/.test(textOf(malformed)), textOf(malformed));
   const nonzero = await rpcCall({ hooksDir, mode: 'nonzero' });
   check('nonzero runner exit becomes REVIEW_UNAVAILABLE', /code=9/.test(textOf(nonzero)) && verdictCount(textOf(nonzero)) === 1, textOf(nonzero));
-  check('nonzero diagnostics are bounded and redacted', !/visible-secret/.test(textOf(nonzero)) && /Bearer \[REDACTED\]/.test(textOf(nonzero)) && /ANTHROPIC_API_KEY=\[REDACTED\]/.test(textOf(nonzero)), textOf(nonzero));
+  check('nonzero diagnostics are bounded and redact every credential shape', !/visible-secret|dXNlcjpwYXNz|json-secret|url-secret|UPPERCASESECRET/.test(textOf(nonzero)) && /Bearer \[REDACTED\]/.test(textOf(nonzero)) && /Authorization: \[REDACTED\]/.test(textOf(nonzero)) && /ANTHROPIC_API_KEY=\[REDACTED\]/.test(textOf(nonzero)) && /postgres:\/\/\[REDACTED\]@/.test(textOf(nonzero)), textOf(nonzero));
+  const hugeDiagnostic = await rpcCall({ hooksDir, mode: 'huge-diagnostic' });
+  check('oversized diagnostics are omitted without scanning or leaking the tail', /exceeded safe redaction scan cap/.test(textOf(hugeDiagnostic)) && !/tail-secret/.test(textOf(hugeDiagnostic)), textOf(hugeDiagnostic));
   const oversize = await rpcCall({ hooksDir, mode: 'oversize' });
   check('capture overflow is unavailable rather than silently truncated', /exceeded the 32768-byte transport capture limit/.test(textOf(oversize)) && verdictCount(textOf(oversize)) === 1, textOf(oversize));
   const missingDir = temp('orchestra-review-transport-missing-');
@@ -254,7 +266,11 @@ async function main() {
   check('refs and explicit controls reach the runner as argv values', seen.args.includes('258687598fbc43095537757584e666d9859cc6fe') && seen.args.includes('3b8e0cbb7794d8af008d1dcec560a5fae0ada593') && seen.args.includes('12345') && seen.args.includes('echo "quoted"'), JSON.stringify(seen.args));
   check('runner receives the exact project root without shell quoting', path.resolve(seen.cwd) === path.resolve(project) && path.resolve(seen.projectDir) === path.resolve(project), JSON.stringify(seen));
   check('transport removes serialized temporary inputs after completion', !fs.existsSync(seen.args[seen.args.indexOf('--work-order') + 1]) && !fs.existsSync(seen.args[seen.args.indexOf('--executor-report') + 1]), JSON.stringify(seen.args));
+  check('serialized inputs use owner-only POSIX permissions', process.platform === 'win32' || (seen.runDirMode === 0o700 && seen.workOrderMode === 0o600 && seen.executorReportMode === 0o600), JSON.stringify(seen));
   check('serialized review still relays a valid report', /^VERDICT: APPROVE$/m.test(textOf(serialized)), textOf(serialized));
+
+  section('5. Cancellation has no delayed process-group signal');
+  check('transport contains no stale delayed kill timer', !/killTimer|KILL_GRACE_MS/.test(SERVER_SOURCE), SERVER_SOURCE.match(/killTimer|KILL_GRACE_MS/));
 }
 
 main().catch((error) => {
