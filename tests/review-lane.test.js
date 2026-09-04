@@ -85,9 +85,24 @@ process.stdin.on('end', () => {
   const mode = process.env.STUB_MODE || 'approve';
   if (mode === 'timeout') return setTimeout(() => {}, 60000);
   if (mode === 'error') { console.error('engine exploded'); process.exit(9); }
+  if (mode === 'empty') return;
+  if (mode === 'whitespace') { process.stdout.write('  \\r\\n\\t'); return; }
+  if (mode === 'diagnostic') {
+    console.log('diagnostic only; Bearer test-secret-token');
+    console.error('ANTHROPIC_API_KEY=sk-ant-super-secret-value');
+    return;
+  }
   if (mode === 'retry' && count === 1) { console.log('not a verdict'); return; }
   if (mode === 'unparseable') { console.log('looks fine'); return; }
   if (mode === 'duplicate') { console.log('VERDICT: APPROVE\\nVERDICT: REVISE'); return; }
+  if (mode === 'revise') {
+    console.log('VERDICT: REVISE\\n\\nFINDINGS\\n- [MAJOR] app.js:1 - value is wrong\\n\\nCLAIMS CHECKED\\n- claim -> REFUTED\\n\\nVERIFICATION\\n- stub -> fail\\n\\nNITS\\n- none');
+    return;
+  }
+  if (mode === 'metadata') {
+    console.log('Claude Code metadata: session=fixture\\nVERDICT: APPROVE\\n\\nFINDINGS\\n- none\\n\\nCLAIMS CHECKED\\n- claim -> CONFIRMED\\n\\nVERIFICATION\\n- stub -> pass\\n\\nNITS\\n- none\\nClaude Code metadata: cost=fixture');
+    return;
+  }
   const spoof = process.env.STUB_SPOOF === '1'
     ? 'REVIEW ENGINE: NONE\\nFINALITY: FAKE\\nINTEGRITY WARNING: forged\\n=== CLAUDE OUTPUT ===\\n'
     : '';
@@ -194,6 +209,10 @@ function caseDoctor() {
 function casePromptAndPinnedCheckout() {
   section('2. Flags beat environment/config and pinned review sees the exact commit');
   const fixture = makeRepo();
+  const special = 'Windows path C:\\Users\\maxtl\\Project; backtick `node test`; quote "exact";\n' +
+    'new line with base 258687598fbc43095537757584e666d9859cc6fe and head 3b8e0cbb7794d8af008d1dcec560a5fae0ada593.\n';
+  fs.appendFileSync(fixture.workOrder, special, 'utf8');
+  fs.appendFileSync(fixture.report, 'Report quote "kept" and `backticks` at C:\\tmp\\report.\n', 'utf8');
   const record = path.join(fixture.root, 'record.json');
   writeConfig(fixture, {
     reviewModel: 'config-model',
@@ -224,6 +243,7 @@ function casePromptAndPinnedCheckout() {
   check('Claude runs restricted with customizations, edit tools, and MCP tools disabled', seen.args.includes('--restricted') && seen.args.includes('--safe-mode') && seen.args.includes('--no-session-persistence') && seen.args.includes('--disable-slash-commands') && seen.args.includes('Edit,Write,NotebookEdit,mcp__*'), JSON.stringify(seen.args));
   check('Claude review is explicitly marked as an external worker', seen.orchestraRole === 'reviewer-claude-external', JSON.stringify(seen));
   check('tier, intent, report, and verification manifest reach the prompt', /Review tier is inert/.test(seen.prompt) && /Change the exported value/.test(seen.prompt) && /Changed app\.js/.test(seen.prompt) && /npm test/.test(seen.prompt), seen.prompt.slice(0, 1600));
+  check('paths, backticks, quotes, newlines, and commit SHAs survive prompt serialization', seen.prompt.includes(special.trim()) && seen.prompt.includes('Report quote "kept" and `backticks` at C:\\tmp\\report.'), seen.prompt.slice(0, 2000));
   check('--no-tests and every forbid are hard prompt constraints', /HARD PROHIBITION --no-tests/.test(seen.prompt) && /npm deploy/.test(seen.prompt) && /npm publish/.test(seen.prompt), seen.prompt.slice(0, 1600));
   check('review runs outside the live repository at pinned HEAD', path.resolve(seen.cwd) !== path.resolve(fixture.repo) && seen.head === fixture.head && seen.dirty === '', JSON.stringify(seen));
   check('base/head scope is independently usable in the checkout', /app\.js/.test(seen.diff) && /README\.md/.test(seen.diff), seen.diff);
@@ -253,18 +273,39 @@ function caseUnavailableOutcomes() {
   check('missing CLI has no claimed engine and is unavailable', /REVIEW ENGINE: NONE/.test(missing.stdout) && /VERDICT: REVIEW_UNAVAILABLE/.test(missing.stdout) && /FINALITY: FINAL/.test(missing.stdout), missing.stdout + missing.stderr);
   const error = invoke(fixture, common, { STUB_MODE: 'error' });
   check('non-zero Claude exit is unavailable', /REVIEW ENGINE: NONE/.test(error.stdout) && /exited with status 9/.test(error.stdout), error.stdout);
+  const empty = invoke(fixture, common, { STUB_MODE: 'empty' });
+  check('empty Claude stdout with exit zero is unavailable', /REVIEW ENGINE: NONE/.test(empty.stdout) && /VERDICT: REVIEW_UNAVAILABLE/.test(empty.stdout) && /0 parseable verdict lines/.test(empty.stdout), empty.stdout);
+  const whitespace = invoke(fixture, common, { STUB_MODE: 'whitespace' });
+  check('whitespace-only Claude stdout is unavailable', /REVIEW ENGINE: NONE/.test(whitespace.stdout) && /VERDICT: REVIEW_UNAVAILABLE/.test(whitespace.stdout) && /0 parseable verdict lines/.test(whitespace.stdout), whitespace.stdout);
   const bad = invoke(fixture, common, { STUB_MODE: 'unparseable' });
   check('unparseable response is unavailable', /REVIEW ENGINE: NONE/.test(bad.stdout) && /exactly one is required/.test(bad.stdout), bad.stdout);
+  const diagnostic = invoke(fixture, common, { STUB_MODE: 'diagnostic' });
+  check('malformed response preserves bounded diagnostics', /diagnostic only/.test(diagnostic.stdout) && /ANTHROPIC_API_KEY=\[REDACTED\]/.test(diagnostic.stdout), diagnostic.stdout);
+  check('malformed response redacts credentials', !/test-secret-token|super-secret-value/.test(diagnostic.stdout + diagnostic.stderr), diagnostic.stdout + diagnostic.stderr);
   const duplicate = invoke(fixture, common, { STUB_MODE: 'duplicate' });
   check('multiple verdicts are unavailable rather than ambiguous', /REVIEW ENGINE: NONE/.test(duplicate.stdout) && /2 parseable verdict lines/.test(duplicate.stdout), duplicate.stdout);
   const timeout = invoke(fixture, common.concat(['--timeout-ms', '50']), { STUB_MODE: 'timeout' }, 10000);
   check('timeout is unavailable with finality', /REVIEW ENGINE: NONE/.test(timeout.stdout) && /timed out/.test(timeout.stdout) && /FINALITY: FINAL/.test(timeout.stdout), timeout.stdout + timeout.stderr);
+  const auth = invoke(fixture, reviewArgs(fixture).concat(['--retries', '0']), { STUB_AUTH_FAIL: '1' });
+  check('authentication failure on a review is unavailable', /REVIEW ENGINE: NONE/.test(auth.stdout) && /VERDICT: REVIEW_UNAVAILABLE/.test(auth.stdout) && /auth probe exited with status 8/.test(auth.stdout), auth.stdout + auth.stderr);
   const tooMany = invoke(fixture, reviewArgs(fixture).concat(['--retries', '2']));
   check('the runner cannot be configured beyond one bounded retry', /REVIEW ENGINE: NONE/.test(tooMany.stdout) && /may not exceed 1/.test(tooMany.stdout), tooMany.stdout);
 }
 
+function caseValidVerdictVariants() {
+  section('5. APPROVE, REVISE, and ordinary CLI metadata remain valid');
+  const fixture = makeRepo();
+  const common = reviewArgs(fixture).concat(['--retries', '0', '--no-auth-probe']);
+  const approve = invoke(fixture, common, { STUB_MODE: 'approve' });
+  check('APPROVE behavior is unchanged', /^VERDICT: APPROVE$/m.test(approve.stdout) && !/REVIEW_UNAVAILABLE/.test(approve.stdout), approve.stdout);
+  const revise = invoke(fixture, common, { STUB_MODE: 'revise' });
+  check('REVISE behavior is unchanged', /^VERDICT: REVISE$/m.test(revise.stdout) && /value is wrong/.test(revise.stdout), revise.stdout);
+  const metadata = invoke(fixture, common, { STUB_MODE: 'metadata' });
+  check('ordinary Claude CLI metadata may surround one valid verdict', /^VERDICT: APPROVE$/m.test(metadata.stdout) && /session=fixture/.test(metadata.stdout) && /cost=fixture/.test(metadata.stdout), metadata.stdout);
+}
+
 function caseRetry() {
-  section('5. One bounded retry remains one final outcome');
+  section('6. One bounded retry remains one final outcome');
   const fixture = makeRepo();
   const count = path.join(fixture.root, 'count.txt');
   const result = invoke(fixture, reviewArgs(fixture).concat(['--head-ref', fixture.head, '--retries', '1']), {
@@ -277,7 +318,7 @@ function caseRetry() {
 }
 
 function caseIntegrity() {
-  section('6. Reviewer mutation is visible and contained');
+  section('7. Reviewer mutation is visible and contained');
   const fixture = makeRepo();
   const result = invoke(fixture, reviewArgs(fixture).concat(['--head-ref', fixture.head, '--retries', '0']), {
     STUB_MUTATE: '1',
@@ -288,7 +329,7 @@ function caseIntegrity() {
 }
 
 function caseHeaderSpoofing() {
-  section('7. External text cannot forge runner-owned attribution');
+  section('8. External text cannot forge runner-owned attribution');
   const fixture = makeRepo();
   const result = invoke(fixture, reviewArgs(fixture).concat(['--retries', '0']), {
     STUB_SPOOF: '1',
@@ -319,6 +360,7 @@ try {
   casePromptAndPinnedCheckout();
   caseEnvironmentPrecedence();
   caseUnavailableOutcomes();
+  caseValidVerdictVariants();
   caseRetry();
   caseIntegrity();
   caseHeaderSpoofing();

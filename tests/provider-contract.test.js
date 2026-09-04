@@ -33,6 +33,8 @@ const protocol = read('ORCHESTRA.md');
 const installer = read('install.js');
 const readme = read('README.md');
 const claudePlanRunner = read('packs/claude/hooks/orchestra-ultraplan.js');
+const claudeReviewer = read('packs/claude/agents/reviewer-claude.toml');
+const claudeReviewTransport = read('packs/claude/hooks/orchestra-review-mcp.js');
 
 check('protocol names Codex as the Director surface', /Codex.+Director|Director.+Codex/is.test(protocol));
 check('protocol assigns scouting and execution to OpenAI models', /scout.+GPT-5\.6 Luna/is.test(protocol) && /executor.+GPT-5\.6 Terra/is.test(protocol));
@@ -52,6 +54,8 @@ const core = [
 check('six OpenAI core profiles exist', core.every((name) => fs.existsSync(path.join(ROOT, 'agents', name))));
 check('core profiles are TOML rather than Claude markdown profiles', !fs.readdirSync(path.join(ROOT, 'agents')).some((name) => name.endsWith('.md')));
 check('Claude reviewer launcher is present in the optional pack', fs.existsSync(path.join(ROOT, 'packs', 'claude', 'agents', 'reviewer-claude.toml')));
+check('Claude reviewer uses one required blocking MCP transport', /mcp__orchestra_claude_review__orchestra_review/.test(claudeReviewer) && /\[mcp_servers\.orchestra_claude_review\]/.test(claudeReviewer) && /required = true/.test(claudeReviewer));
+check('Claude review transport makes empty output fail loud', /!out\.trim\(\)/.test(claudeReviewTransport) && /VERDICT: REVIEW_UNAVAILABLE/.test(claudeReviewTransport));
 check('Claude planning consultation is isolated from a co-installed Claude Director', claudePlanRunner.includes("'--restricted', '--safe-mode'") && claudePlanRunner.includes("ORCHESTRA_ROLE: 'planner-claude-external'"));
 
 check('canonical installer targets .codex', installer.includes("const RECEIPT_REL = '.codex/orchestra-install.json'"));

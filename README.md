@@ -122,7 +122,8 @@ The per-harness pause files (`.claude/orchestra.pause` and
 |   `-- hooks/
 |       |-- package.json              forces CommonJS beneath ESM projects
 |       |-- orchestra-guard.js
-|       `-- orchestra-review.js       with the claude pack
+|       |-- orchestra-review.js       Claude CLI runner, with the claude pack
+|       `-- orchestra-review-mcp.js   blocking review transport, with the claude pack
 `-- .agents/skills/
     |-- orchestra-plan/SKILL.md
     |-- orchestra-review/SKILL.md
@@ -154,7 +155,12 @@ detached worktree outside the repository so the review is pinned to the commit
 that will ship. An explicitly uncommitted review uses the live tree and checks
 that the tree did not change during review.
 
-The thin launcher normally invokes:
+The thin launcher makes one typed call to the project-scoped
+`orchestra_claude_review.orchestra_review` MCP tool. That transport blocks until
+the runner closes and relays a valid report byte-for-byte. Empty stdout,
+abnormal exit, timeout/cancellation, or malformed output is converted to an
+explicit `REVIEW_UNAVAILABLE` result. For standalone diagnosis, the underlying
+runner can still be invoked directly:
 
 ```bash
 node .codex/hooks/orchestra-review.js \
@@ -240,7 +246,7 @@ produce explicit unavailable results without breaking the core harness.
 The `claude` pack provides:
 
 - `reviewer-claude`, a thin OpenAI launcher for independent Claude review;
-- the pinned review runner and doctor;
+- the blocking MCP transport plus pinned review runner and doctor;
 - `planner-claude` and its planning counterpart for optional cross-vendor plan
   critique.
 
@@ -267,6 +273,7 @@ node tests/install.test.js
 node tests/coexistence.test.js
 node tests/guard.test.js
 node tests/review-lane.test.js
+node tests/review-transport.test.js
 ```
 
 The opt-in end-to-end probe installs both sibling harnesses into a temporary
