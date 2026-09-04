@@ -208,15 +208,38 @@ function run(command, args, options) {
 
 function commandFailure(result) {
   if (result.error) {
-    if (result.error.code === 'ETIMEDOUT') return 'timed out';
-    return result.error.message;
+    if (result.error.code === 'ETIMEDOUT') return 'timed out' + commandDiagnostics(result);
+    return redactDiagnostic(result.error.message) + commandDiagnostics(result);
   }
-  if (result.signal) return 'terminated by signal ' + result.signal;
+  if (result.signal) return 'terminated by signal ' + result.signal + commandDiagnostics(result);
   if (result.status !== 0) {
-    const detail = String(result.stderr || result.stdout || '').trim().slice(0, 2000);
-    return 'exited with status ' + result.status + (detail ? ': ' + detail : '');
+    return 'exited with status ' + result.status + commandDiagnostics(result);
   }
   return '';
+}
+
+function redactDiagnostic(value) {
+  return String(value || '')
+    .replace(/\bBearer\s+[^\s"']+/gi, 'Bearer [REDACTED]')
+    .replace(/\bsk-(?:ant-)?[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
+    .replace(/((?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|AUTHORIZATION)\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '$1[REDACTED]')
+    .replace(/(https?:\/\/)[^\s/@:]+:[^\s/@]+@/gi, '$1[REDACTED]@')
+    .replace(/\u0000/g, '');
+}
+
+function boundedDiagnostic(value, limit) {
+  const clean = redactDiagnostic(value).trim();
+  if (!clean) return '';
+  return clean.length > limit ? '[truncated] ' + clean.slice(-limit) : clean;
+}
+
+function commandDiagnostics(result) {
+  const stderr = boundedDiagnostic(result && result.stderr, 2000);
+  const stdout = boundedDiagnostic(result && result.stdout, 2000);
+  const parts = [];
+  if (stderr) parts.push('stderr: ' + stderr);
+  if (stdout) parts.push('stdout: ' + stdout);
+  return parts.length ? ': ' + parts.join(' / ') : '';
 }
 
 function authSummary(value) {
@@ -230,7 +253,7 @@ function authSummary(value) {
   } catch (_) {
     // Older Claude CLIs may return a human-readable status instead of JSON.
   }
-  return text.split(/\r?\n/)[0];
+  return redactDiagnostic(text.split(/\r?\n/)[0]);
 }
 
 function probeClaude(cfg) {
@@ -495,7 +518,8 @@ function attemptReview(root, cfg, request) {
     if (verdicts.length !== 1) {
       return {
         ok: false,
-        detail: 'Claude returned ' + verdicts.length + ' parseable verdict lines; exactly one is required',
+        detail: 'Claude returned ' + verdicts.length + ' parseable verdict lines; exactly one is required' +
+          commandDiagnostics(result),
         changed,
         checkout: checkout.label,
       };
@@ -542,7 +566,7 @@ function unavailable(detail, attempts, maximum, integrityPaths) {
       ? 'INTEGRITY WARNING: the review checkout changed: ' + integrityPaths.join(', ') + '\n'
       : '') +
     '\nVERDICT: REVIEW_UNAVAILABLE\n\n' +
-    'DETAIL\n- ' + oneLine(detail) + '\n\n' +
+    'DETAIL\n- ' + oneLine(redactDiagnostic(detail)) + '\n\n' +
     'NEXT\n- Run `node .codex/hooks/orchestra-review.js --doctor`; then retry or use the native OpenAI reviewer and report that Claude did not review.\n'
   );
 }
@@ -557,7 +581,7 @@ function main() {
     if (args.doctor) {
       process.stdout.write(
         'CLAUDE REVIEW DOCTOR: NEEDS ATTENTION\n' +
-        'DETAIL: ' + oneLine(error.message) + '\n' +
+        'DETAIL: ' + oneLine(redactDiagnostic(error.message)) + '\n' +
         'NEXT: repair .codex/orchestra.json or the reported Claude review setting.\n'
       );
       process.exitCode = 1;

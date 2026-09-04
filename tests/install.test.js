@@ -117,6 +117,7 @@ function makeMaster() {
   });
   write(path.join(root, 'packs', 'claude', 'agents', 'reviewer-claude.toml'), 'name = "reviewer-claude"\nmodel = "claude-opus-4-1"\n');
   write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-review.js'), "'use strict';\n");
+  write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-review-mcp.js'), "'use strict';\n");
   write(path.join(root, 'packs', 'claude', 'skills', 'cross-compare-plan', 'SKILL.md'), '# Pack skill\n');
   write(path.join(root, 'packs', 'claude', 'skills', 'cross-compare-plan', 'references', 'protocol.md'), '# Protocol\n');
   write(path.join(root, 'packs', '_TEMPLATE', 'pack.json'), '{not selected}\n');
@@ -209,7 +210,7 @@ function case3DeselectRetireAndUninstall() {
   const installed = run(master, [target, '--packs', 'claude', '--specialists', 'modeler']);
   check('selected install succeeds', installed.status === 0, output(installed));
   const retiredTarget = path.join(target, '.codex', 'agents', 'reviewer-claude.toml');
-  check('pack agent and nested pack skill installed', fs.existsSync(retiredTarget) && fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan', 'references', 'protocol.md')), census(target).join('\n'));
+  check('pack agent, blocking transport, and nested pack skill installed', fs.existsSync(retiredTarget) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan', 'references', 'protocol.md')), census(target).join('\n'));
   write(path.join(target, '.codex', 'agents', 'user-owned.toml'), 'name = "user-owned"\n');
 
   fs.unlinkSync(path.join(master, 'packs', 'claude', 'agents', 'reviewer-claude.toml'));
@@ -219,7 +220,7 @@ function case3DeselectRetireAndUninstall() {
 
   const deselect = run(master, [target, '--no-packs', '--no-specialists']);
   check('explicit deselection succeeds', deselect.status === 0, output(deselect));
-  check('pack hook, skill, and specialist are removed', !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review.js')) && !fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan')) && !fs.existsSync(path.join(target, '.codex', 'agents', 'modeler.toml')), census(target).join('\n'));
+  check('pack hooks, skill, and specialist are removed', !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && !fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan')) && !fs.existsSync(path.join(target, '.codex', 'agents', 'modeler.toml')), census(target).join('\n'));
   check('unknown adjacent file survives pruning', fs.existsSync(path.join(target, '.codex', 'agents', 'user-owned.toml')), '');
 
   const uninstall = run(master, [target, '--uninstall']);
