@@ -21,7 +21,8 @@ through one read-only scout mission carrying the checklist below.
    `executor-heavy.toml`, `executor-heavy-xhigh.toml`, and `reviewer.toml` under
    `.codex/agents/`; list other TOML profiles as specialists or pack roles.
 5. **Pack:** `.codex/orchestra-install.json` recorded packs/specialists and
-   whether `reviewer-claude.toml` plus `.codex/hooks/orchestra-review.js` exist.
+   whether `reviewer-claude.toml`, `.codex/hooks/orchestra-review-mcp.js`, and
+   `.codex/hooks/orchestra-review.js` all exist.
 6. **Skills:** directories under `.agents/skills/`, including the core
    `orchestra-plan`, `orchestra-review`, and `orchestra-status` skills.
 7. **Config:** from `.codex/orchestra.json`, or defaults when absent: verification

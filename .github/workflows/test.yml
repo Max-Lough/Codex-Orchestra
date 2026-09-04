@@ -60,3 +60,6 @@ jobs:
 
       - name: Claude review lane suite
         run: node tests/review-lane.test.js
+
+      - name: Claude review transport suite
+        run: node tests/review-transport.test.js

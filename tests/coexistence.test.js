@@ -153,7 +153,7 @@ function liveContract() {
   result = runInstaller(CLAUDE_ROOT, first, []);
   check('Claude update succeeds after Codex is installed', result.status === 0, output(result));
   check('Claude update preserves the real Codex surface byte-for-byte', snapshot(first, CODEX_SURFACE) === codexBeforeClaudeUpdate, snapshot(first, CODEX_SURFACE));
-  check('both cross-family packs are present together', fs.existsSync(path.join(first, '.claude', 'hooks', 'orchestra-review.js')) && fs.existsSync(path.join(first, '.codex', 'hooks', 'orchestra-review.js')));
+  check('both cross-family packs are present together', fs.existsSync(path.join(first, '.claude', 'hooks', 'orchestra-review.js')) && fs.existsSync(path.join(first, '.codex', 'hooks', 'orchestra-review.js')) && fs.existsSync(path.join(first, '.codex', 'hooks', 'orchestra-review-mcp.js')));
 
   const installedClaudeReview = fs.readFileSync(path.join(first, '.claude', 'hooks', 'orchestra-review.js'), 'utf8');
   const installedClaudeExec = fs.readFileSync(path.join(first, '.claude', 'hooks', 'orchestra-exec.js'), 'utf8');

@@ -12,6 +12,7 @@
   },
   "notes": [
     "OpenAI-authored campaigns route to reviewer-claude by default when this pack is installed.",
+    "reviewer-claude uses one blocking project-scoped MCP transport call; it never polls a background runner.",
     "Check availability with: node .codex/hooks/orchestra-review.js --doctor",
     "A failed Claude lane is REVIEW_UNAVAILABLE, never approval; route to the fresh-context native OpenAI reviewer and report the cross-family fallback."
   ]

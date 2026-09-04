@@ -16,8 +16,13 @@ counterpart for a cross-family planning round.
 
 ## Review invocation
 
-The launcher writes the exact work order and executor report to separate files,
-then runs:
+`reviewer-claude` calls the pack's project-scoped
+`orchestra_claude_review.orchestra_review` MCP tool once. The tool accepts the
+work order, executor report, refs, and explicit controls as typed arguments,
+writes its own temporary input files, and blocks until the runner process has
+closed. It then relays the runner's stdout verbatim.
+
+The runner remains directly invokable for diagnosis and standalone use:
 
 ```bash
 node .codex/hooks/orchestra-review.js \
@@ -54,6 +59,13 @@ VERDICT: REVIEW_UNAVAILABLE
 `REVIEW_UNAVAILABLE` is never approval. The Director raises the protocol's
 cross-family-unavailable warning and uses the native fresh-context OpenAI
 reviewer.
+
+The MCP transport independently enforces the same boundary. Empty or
+whitespace-only runner stdout (including exit code 0), abnormal runner exit,
+cancellation, a wedged-runner backstop, capture overflow, or output without one
+recognized verdict becomes a non-empty `REVIEW_UNAVAILABLE` report. Diagnostic
+tails are bounded and credential-shaped values are redacted. A valid runner
+report is returned byte-for-byte; the launcher must not append its own text.
 
 ## Configuration
 
