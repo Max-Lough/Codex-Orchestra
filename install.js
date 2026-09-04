@@ -492,13 +492,22 @@ function mergeHooks(context, targetState) {
     }
   }
 
+  // Ownership follows what this install GUARANTEES is present, not what it
+  // happened to insert. Recording only on insert left a project that already
+  // carried these entries — a hand-placed or copied .codex/ — with an empty
+  // managedHooks forever: every later run also found them present, so the
+  // receipt never claimed them. Uninstall then deleted orchestra-guard.js and
+  // left four references to it behind, and every session and tool call after
+  // that invoked a missing file. Claiming an already-present entry is safe by
+  // construction: validateReceipt refuses a managedHooks entry that is not a
+  // SessionStart/PreToolUse hook pointing at orchestra-guard.js.
   const managedHooks = [];
   for (const item of flattenHookEntries(context.hooksJson)) {
     if (!Array.isArray(config.hooks[item.event])) config.hooks[item.event] = [];
     if (!config.hooks[item.event].some((entry) => sameJson(entry, item.entry))) {
       config.hooks[item.event].push(JSON.parse(JSON.stringify(item.entry)));
-      managedHooks.push(JSON.parse(JSON.stringify(item)));
     }
+    managedHooks.push(JSON.parse(JSON.stringify(item)));
   }
   return { config, managedHooks, created: created || !!(targetState.receipt && targetState.receipt.createdHooksFile) };
 }

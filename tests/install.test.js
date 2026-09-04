@@ -337,6 +337,53 @@ function case4MalformedAtomicityAndCollisions() {
   check('installer refuses its own master as a target', self.status !== 0 && /own master folder/.test(output(self)), output(self));
 }
 
+function case6ClaimsPreexistingHookEntries() {
+  section('6. Hook entries already on disk are claimed, so uninstall cannot leave a dangling guard');
+  // FIELD REPORT: PiratePartyPals carried a hand-placed .codex/hooks.json, so
+  // the first install found the Orchestra entries already present, inserted
+  // nothing, and recorded managedHooks: []. Every later run found them present
+  // too, so the receipt never self-corrected. Uninstall then deleted
+  // orchestra-guard.js and left four references to it behind — a SessionStart
+  // and a PreToolUse ".*" hook invoking a file that no longer existed.
+  const master = makeMaster();
+  const target = temp('codex-orchestra-target-');
+  const sourceHooks = readJson(path.join(master, 'hooks.json'));
+  const preexisting = JSON.parse(JSON.stringify(sourceHooks));
+  const foreign = hookEntry('node tools/mine.js', 'My own hook');
+  preexisting.hooks.PreToolUse.push(foreign);
+  writeJson(path.join(target, '.codex', 'hooks.json'), preexisting);
+
+  const result = run(master, [target, '--no-packs', '--no-specialists']);
+  check('install onto pre-existing Orchestra entries exits zero', result.status === 0, output(result));
+  const receipt = readJson(path.join(target, '.codex', 'orchestra-install.json'));
+  check(
+    'the receipt claims the entries it guarantees, not only the ones it inserted',
+    receipt.managedHooks.length === 1,
+    JSON.stringify(receipt.managedHooks)
+  );
+  check(
+    'claiming does not duplicate the entry',
+    ownHookCount(readJson(path.join(target, '.codex', 'hooks.json'))) === 1,
+    JSON.stringify(readJson(path.join(target, '.codex', 'hooks.json')))
+  );
+  check('createdHooksFile stays false — the installer did not create it', receipt.createdHooksFile === false, JSON.stringify(receipt));
+
+  const removed = run(master, [target, '--uninstall']);
+  check('uninstall exits zero', removed.status === 0, output(removed));
+  check(
+    'the guard file is gone',
+    !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-guard.js')),
+    census(target).join('\n')
+  );
+  const after = readJson(path.join(target, '.codex', 'hooks.json'));
+  check('no hook still points at the deleted guard', ownHookCount(after) === 0, JSON.stringify(after));
+  check(
+    'the foreign hook is preserved',
+    (after.hooks.PreToolUse || []).some((entry) => JSON.stringify(entry) === JSON.stringify(foreign)),
+    JSON.stringify(after)
+  );
+}
+
 function case5LintAndScanUpdate() {
   section('5. Source lint and receipt-based scan/update');
   const master = makeMaster();
@@ -366,6 +413,7 @@ try {
   case3DeselectRetireAndUninstall();
   case4MalformedAtomicityAndCollisions();
   case5LintAndScanUpdate();
+  case6ClaimsPreexistingHookEntries();
 } catch (error) {
   check('suite completed without an uncaught exception', false, error && error.stack ? error.stack : error);
 }
