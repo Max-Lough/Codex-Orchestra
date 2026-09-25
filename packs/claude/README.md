@@ -25,6 +25,43 @@ work order, executor report, refs, and explicit controls as typed arguments,
 writes its own temporary input files, and blocks until the runner process has
 closed. It then relays the runner's stdout verbatim.
 
+## Final review report contract
+
+Claude must return exactly one `VERDICT: APPROVE` or `VERDICT: REVISE` line,
+followed once each and in this order by `## FINDINGS`, `## CLAIMS CHECKED`,
+`## VERIFICATION`, and `## NITS`. The headings may be plain Markdown text for
+older Claude CLI output and may carry a parenthesized count such as
+`## FINDINGS (2 issues)`, but their spelling and order are fixed. Sections use
+top-level `-` entries; an entry may contain indented wrapped prose, nested
+bullets, or fenced code. Indent continuations, nested bullets, and complete
+fences beneath the top-level entry they support. Structural-looking tokens
+inside a fence are inert. Free-floating prose is rejected. `FINDINGS` is
+either `- none` or severity-tagged actionable entries. The preferred
+canonical CLAIMS CHECKED grammar is
+`- <claim> -> CONFIRMED|REFUTED|UNVERIFIED <concrete evidence>`; the
+preferred VERIFICATION grammar is
+`- <command/check> -> PASS|FAIL|NOT-RUN <concrete result or reason>`.
+The Unicode right arrow is accepted as an equivalent delimiter. A status alone
+may use one exact matching pair of `**`, `__`, `*`, `_`, or backtick
+wrappers. The subject, arrow, and status must remain on the top-level bullet.
+Evidence may be inline or in a clearly owned indented non-fenced prose
+continuation or evidence-only nested bullet. Competing status constructs,
+mismatched wrappers, em-dash delimiters, split or nested status bullets, and
+fenced-only evidence are rejected. Natural forms such as
+`-> PASS (65 passed)`, `-> PASS as a search, negative as evidence (no matches)`,
+and `-> PASS by inspection (read src/app.js)` are valid. Nits are explicit
+entries or `- none`.
+
+The runner and MCP relay use the same validator. Missing, empty, duplicate, or
+out-of-order sections; whole-entry placeholder markers; invalid statuses;
+multiple verdicts; and contradictory outcomes all become one final
+`REVIEW_UNAVAILABLE`. `APPROVE` permits `- none` or MINOR-only findings, but
+rejects any CRITICAL/MAJOR finding, REFUTED claim, or FAIL check in a top-level
+or nested semantic entry. Explained UNVERIFIED claims and NOT-RUN checks record
+evidence limits and may accompany APPROVE. `REVISE` requires an actionable
+severity finding or decisive adverse REFUTED/FAIL status; uncertainty or
+NOT-RUN alone does not justify REVISE.
+
 The runner remains directly invokable for diagnosis and standalone use:
 
 ```bash
@@ -47,14 +84,20 @@ the runner removes it afterward. The runner hashes the checkout before and
 after Claude runs. Any mutation is surfaced as `INTEGRITY WARNING`; a mutation
 inside a pinned checkout is contained when that checkout is removed.
 
-One retry is enabled by default. Retries use new Claude processes and new
-pinned worktrees but produce one outcome. Every outcome contains `FINALITY`.
-Missing/auth-failed Claude, timeout, non-zero exit, or anything other than one
-parseable `VERDICT: APPROVE|REVISE` produces:
+No retry is enabled by default: each review request makes one Claude invocation.
+An explicit retry allowance may be used only after a true runner-detected Claude
+timeout. Nonzero Claude exits and signals are terminal; authentication,
+configuration, spawn, cancellation, overflow, and report-contract failures also
+stop after one attempt. Retries use new Claude
+processes and new pinned worktrees but produce one outcome. Every unavailable
+outcome contains `FINALITY` and a stable non-secret `STAGE` label. Missing/
+auth-failed Claude, timeout, non-zero exit, or a malformed final review report
+produces:
 
 ```text
 REVIEW ENGINE: NONE - no verdict produced (attempted: Claude CLI, cross-vendor)
 FINALITY: FINAL (...)
+STAGE: <stable_failure_stage>
 
 VERDICT: REVIEW_UNAVAILABLE
 ```
@@ -66,9 +109,14 @@ reviewer.
 The MCP transport independently enforces the same boundary. Empty or
 whitespace-only runner stdout (including exit code 0), abnormal runner exit,
 cancellation, a wedged-runner backstop, capture overflow, or output without one
-recognized verdict becomes a non-empty `REVIEW_UNAVAILABLE` report. Diagnostic
-tails are bounded and credential-shaped values are redacted. A valid runner
+complete validator-accepted report becomes a non-empty `REVIEW_UNAVAILABLE`
+report. The exact validator reason is retained on its own bounded, redacted
+line, while raw stdout/stderr are independently represented by one bounded,
+redacted head-and-tail preview so both the beginning and failure suffix survive.
+A valid runner
 report is returned byte-for-byte; the Director must not append its own text.
+Its `retries` argument is strictly a JSON integer `0` or `1`; invalid runtime
+types or values return an MCP invalid-parameters error before the runner starts.
 
 ## Configuration
 
@@ -87,7 +135,8 @@ Durable settings live under `claude` in `.codex/orchestra.json`:
     "reviewModel": "opus",
     "reviewEffort": "high",
     "reviewTimeoutMs": 1800000,
-    "reviewRetries": 1,
+    "reviewRetries": 0,
+    "reviewKillSurvivors": true,
     "authProbe": true,
     "probeTimeoutMs": 90000,
     "worktreeRoot": "",
@@ -107,7 +156,8 @@ default.
 | `reviewModel` | `ORCHESTRA_CLAUDE_REVIEW_MODEL` | `opus` |
 | `reviewEffort` | `ORCHESTRA_CLAUDE_REVIEW_EFFORT` | `high` |
 | `reviewTimeoutMs` | `ORCHESTRA_CLAUDE_REVIEW_TIMEOUT_MS` | `1800000` |
-| `reviewRetries` | `ORCHESTRA_CLAUDE_REVIEW_RETRIES` | `1` |
+| `reviewRetries` | `ORCHESTRA_CLAUDE_REVIEW_RETRIES` | `0` |
+| `reviewKillSurvivors` | `ORCHESTRA_CLAUDE_REVIEW_KILL_SURVIVORS` | `true` |
 | `authProbe` | `ORCHESTRA_CLAUDE_AUTH_PROBE` | `true` |
 | `probeTimeoutMs` | `ORCHESTRA_CLAUDE_PROBE_TIMEOUT_MS` | `90000` |
 | `worktreeRoot` | `ORCHESTRA_CLAUDE_WORKTREE_ROOT` | OS temporary directory |
@@ -136,3 +186,49 @@ The planner uses `ORCHESTRA_CLAUDE_PLAN_MODEL` (default `fable`),
 `ORCHESTRA_CLAUDE_PLAN_TIMEOUT_MS` (default `900000`). It receives only the
 supplied plan and brief, runs under the same restricted safe-mode isolation,
 sets `ORCHESTRA_ROLE=planner-claude-external`, and exposes no repository tools.
+
+## Process supervision
+
+The real Claude review and planning invocations run under the shared
+process-tree supervisor. Each attempted run reports a process census before
+the Claude output or unavailable verdict. Missing or incomplete supervisor
+receipts fail closed. Attributed descendants that outlive Claude are reaped by
+default.
+
+For review, set `ORCHESTRA_CLAUDE_REVIEW_KILL_SURVIVORS=0` or
+`claude.reviewKillSurvivors=false` only for diagnosis. Planning uses
+`ORCHESTRA_CLAUDE_PLAN_KILL_SURVIVORS` with a default of `true`.
+`ORCHESTRA_JOBRUN=off` disables supervision for both lanes and is stated
+loudly in their output.
+
+Every receipt and process-census block labels overall descendant coverage
+`BEST-EFFORT` on every current platform. Engines are launched unsuspended, so
+on Windows a child can start before the engine is assigned to the Job object.
+After successful assignment, separate receipt/output metadata labels Job
+membership and enabled Job enforcement `AUTHORITATIVE` only from that instant
+onward; it does not upgrade whole-run lineage coverage. On Linux, best-effort
+attribution also scans only same-uid processes started after the run for an
+exact inherited, non-secret `ORCHESTRA_JOBRUN_TOKEN` entry in
+`/proc/<pid>/environ`; the scan never retains or prints environment contents.
+A descendant can still evade attribution through the Windows pre-assignment
+window, by clearing its environment, changing uid, or running on a platform
+without readable Linux `/proc` environment data. Accordingly, an empty
+attributed-survivor list is evidence about the available sources, not proof of
+complete lineage cleanup. These limitations do not disable review or planning
+lanes.
+
+On Windows, prefer a native Claude executable when one is available. A
+`.cmd` or `.bat` shim is launched through an explicitly quoted `cmd.exe`
+command line, but Windows can let a very fast shim spawn its child before
+Job-object assignment completes. The supervisor reports what it can prove
+and keeps a missing receipt fail closed.
+
+The installed planning runner remains directly invokable:
+
+```bash
+node .codex/hooks/orchestra-ultraplan.js \
+  --plan <path> --brief <path> --round <n>
+```
+
+Its stable defaults remain model `fable`, effort `max`, timeout `900000`
+milliseconds, external role `planner-claude-external`, and no tools.

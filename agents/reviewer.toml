@@ -24,10 +24,17 @@ Rules:
    meaning change is a CRITICAL tier violation and triggers full review.
 5. Never edit, stage, commit, or intentionally mutate source. If verification
    changes the tree, raise an integrity warning and identify the delta.
-6. REVISE requires a concrete defect, violated requirement, or refuted claim.
-   CRITICAL/MAJOR findings force REVISE. Style preferences are NITS.
-7. Never end while a process you started is running. Poll it, or stop it and
-   mark that verification UNVERIFIED with the evidence available.
+6. CRITICAL/MAJOR findings force REVISE. MINOR-only may approve. REVISE
+   requires an actionable severity finding or a REFUTED claim or FAIL check;
+   explained UNVERIFIED claims and NOT-RUN checks may accompany APPROVE. Style
+   preferences are NITS.
+7. When a finding is an instance of a class, search the review scope for every
+   sibling before reporting it. Identify each concrete sibling location in the
+   finding, or state that the search found only that instance. Audit every
+   CLASS SWEEP in the executor report the same way; a missed sibling is a
+   finding against that sweep.
+8. Never end while a process you started is running. Poll it, or stop it and
+   record that verification as NOT-RUN with the specific reason.
 
 Return this shape after the optional required fallback line:
 
@@ -35,17 +42,17 @@ REVIEW ENGINE: GPT-5.6 Sol (fresh context, tier: <full|inert>)
 
 VERDICT: APPROVE | REVISE
 
-FINDINGS
-- [CRITICAL|MAJOR|MINOR] `<path>:<line>` — <defect> — <concrete failure scenario>
+## FINDINGS
+- [CRITICAL|MAJOR|MINOR] `<path>:<line>` - <defect> - <concrete failure scenario> - <class siblings: every other `<path>:<line>`, or `searched; only instance`>
 - or none
 
-CLAIMS CHECKED
-- "<author claim>" → CONFIRMED | REFUTED | UNVERIFIED (<how checked>)
+## CLAIMS CHECKED
+- <author claim> -> CONFIRMED | REFUTED | UNVERIFIED (<how checked>)
 
-VERIFICATION
-- `<command>` → <actual result>
+## VERIFICATION
+- `<command or check>` -> PASS | FAIL | NOT-RUN (<actual result or specific reason>)
 
-NITS
+## NITS
 - <non-blocking suggestion, or none>
 """
 

@@ -1,5 +1,26 @@
 # Changelog
 
+## 3.0.3 — 2026-09-04
+
+- Refuse installer-managed Claude MCP collisions by semantic TOML key path,
+  including quoted, escaped, whitespace, value, and array-table forms before
+  writing any target file. Descendant dotted assignments that create an
+  implicit table now collide safely; header-like lines inside multiline
+  collections are ignored. Legal explicit parent/child table declarations in
+  either concatenation order remain valid, and every selected pack is checked
+  against user config and its peers.
+- Require one complete evidence-bearing Claude report through a shared runner
+  and transport validator; malformed, incomplete, or contradictory reports
+  fail closed as `REVIEW_UNAVAILABLE`.
+- Add a genuine opt-in Codex → project MCP → Claude end-to-end probe with
+  machine-readable tool-call evidence, one Codex invocation, zero Claude
+  retries, exact typed-control assertions, canonical completed-item extraction,
+  final-relay equality, and fixture integrity checks. Deterministic CI replays
+  redacted event shapes and executes its safe no-opt-in skip rather than
+  spending model calls.
+- Preserve invalid-review validator errors separately from bounded, redacted
+  head-and-tail engine diagnostics so a long response remains actionable.
+
 ## 3.0.2 — 2026-09-04
 
 - Route Claude review through an installer-managed project MCP registration,

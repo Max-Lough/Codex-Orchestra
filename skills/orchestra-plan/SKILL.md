@@ -32,11 +32,13 @@ narrow plan exception. It never implements repository work.
    provably behavior-neutral docs/comment/format-only diff. Name exact commands
    or say "per `.codex/orchestra.json` verification manifest." Verification is
    performed by both executor and reviewer.
-7. **Schedule campaign review.** At least one independent checkpoint must occur
-   before final report, handoff, merge, release, or deploy. OpenAI-authored work
-   routes through the project-scoped Claude review MCP transport when the
-   Claude pack is installed; Anthropic-authored work and Claude-unavailable
-   fallback route to fresh native
+7. **Schedule campaign review.** Default to one independent checkpoint for the
+   campaign's cohesive diff before final report, handoff, merge, release, or
+   deploy. Add an earlier checkpoint only when later work builds on an order and
+   a defect could propagate, for a risk-first probe, or for heterogeneous
+   deliverables; state the reason. OpenAI-authored work routes through the
+   project-scoped Claude review MCP transport when the Claude pack is installed;
+   Anthropic-authored work and Claude-unavailable fallback route to fresh native
    `reviewer`. Require exact base/head refs for committed checkpoints.
 8. **Add cadence only where needed.** A deliberately bundled long order carries
    numbered parts, a named progress file, checkpoint commits when authorized,
