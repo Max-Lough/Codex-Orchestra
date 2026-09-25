@@ -8,6 +8,7 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const RUNNER = path.resolve(__dirname, '..', 'packs', 'claude', 'hooks', 'orchestra-visual.js');
+const ENGINE_LAUNCH = require(path.resolve(__dirname, '..', 'packs', 'claude', 'hooks', 'orchestra-engine-launch.js'));
 let passed = 0;
 
 function test(name, fn) {
@@ -136,6 +137,31 @@ test('Windows shim paths with spaces preserve every restriction flag', () => {
   }
 });
 
+test('shared Windows shim quoting preserves trailing backslashes and shell metacharacters', () => {
+  if (process.platform !== 'win32') return;
+  const item = fixture();
+  const args = [
+    'plain', 'C:\\model cache\\', 'amp&ersand', 'pipe|value',
+    'left<right', 'up^down', 'paren(value)',
+  ];
+  const spec = ENGINE_LAUNCH.engineLaunchSpec(item.bin, args);
+  const result = spawnSync(spec.command, spec.args, {
+    cwd: item.root,
+    encoding: 'utf8',
+    input: '',
+    windowsHide: true,
+    windowsVerbatimArguments: spec.windowsVerbatimArguments,
+    env: { ...process.env, VISUAL_RECORD: item.record },
+  });
+  assert.strictEqual(result.status, 0, result.stdout + result.stderr);
+  const seen = JSON.parse(fs.readFileSync(item.record, 'utf8'));
+  assert.deepStrictEqual(seen.args, args);
+  assert.throws(
+    () => ENGINE_LAUNCH.engineLaunchSpec(item.bin, ['percent%value']),
+    /percent characters are not supported/
+  );
+});
+
 test('model shell metacharacters are rejected before launch', () => {
   const item = fixture();
   const pwned = path.join(item.root, 'pwned.txt');
@@ -167,6 +193,31 @@ test('missing flag values fail before reading an accidental path', () => {
   });
   assert.strictEqual(result.status, 1);
   assert.match(result.stdout, /--work-order requires a value/);
+});
+
+test('unknown, equals-form, and invalid-timeout options fail before launch', () => {
+  for (const item of [
+    { args: ['--unknown', 'value'], pattern: /unknown option/ },
+    { args: ['--effort=xhigh'], pattern: /unknown option/ },
+    { args: ['--timeout-ms', 'nope'], pattern: /visual timeout must be a positive integer/ },
+  ]) {
+    const fx = fixture();
+    const result = invoke(fx, item.args);
+    assert.strictEqual(result.status, 1);
+    assert.match(result.stdout, item.pattern);
+    assert(!fs.existsSync(fx.record));
+  }
+});
+
+test('invalid configured timeout is not silently replaced by the default', () => {
+  const item = fixture();
+  fs.writeFileSync(path.join(item.root, '.codex', 'orchestra.json'), JSON.stringify({
+    claude: { visualTimeoutMs: 0 },
+  }));
+  const result = invoke(item);
+  assert.strictEqual(result.status, 1);
+  assert.match(result.stdout, /visual timeout must be a positive integer/);
+  assert(!fs.existsSync(item.record));
 });
 
 test('work orders outside the project root are rejected', () => {

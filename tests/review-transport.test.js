@@ -153,6 +153,10 @@ function rpcCall(options) {
         messages.push(message);
         if (message.id === 0) {
           send({ jsonrpc: '2.0', method: 'notifications/initialized', params: {} });
+          if (options.listTools) {
+            send({ jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} });
+            continue;
+          }
           send({
             jsonrpc: '2.0',
             id: 1,
@@ -205,6 +209,18 @@ function verdictCount(text) {
 
 async function main() {
   const hooksDir = makeRunnerDir();
+
+  section('0. Published schema matches the review runner controls');
+  const listed = await rpcCall({ hooksDir, listTools: true });
+  const tools = listed.message && listed.message.result && listed.message.result.tools;
+  const effortSchema = tools && tools[0] && tools[0].inputSchema &&
+    tools[0].inputSchema.properties && tools[0].inputSchema.properties.effort;
+  check(
+    'MCP schema exposes only high and xhigh review effort',
+    tools && tools.length === 1 && tools[0].name === 'orchestra_review' &&
+      effortSchema && JSON.stringify(effortSchema.enum) === JSON.stringify(['high', 'xhigh']),
+    JSON.stringify(listed.message)
+  );
 
   section('1. Valid reports block to process close and relay byte-for-byte');
   const expectedApprove = 'REVIEW ENGINE: Claude CLI (stub)\nFINALITY: FINAL\n\n=== CLAUDE OUTPUT ===\nVERDICT: APPROVE\n\n## FINDINGS\n- none\n\n## CLAIMS CHECKED\n- author says value changed -> CONFIRMED (read app.js)\n\n## VERIFICATION\n- node tests/value.test.js -> PASS (exit 0)\n\n## NITS\n- none\n';
@@ -322,6 +338,7 @@ async function main() {
       base_ref: '258687598fbc43095537757584e666d9859cc6fe',
       head_ref: '3b8e0cbb7794d8af008d1dcec560a5fae0ada593',
       tier: 'inert',
+      effort: 'xhigh',
       timeout_ms: 12345,
       retries: 0,
       no_tests: true,
@@ -330,6 +347,7 @@ async function main() {
   });
   const seen = JSON.parse(fs.readFileSync(record, 'utf8'));
   check('work order and report survive serialization exactly', seen.workOrder === workOrder && seen.executorReport === executorReport, JSON.stringify(seen));
+  check('xhigh effort reaches the runner through the project-scoped transport', seen.args.includes('--effort') && seen.args[seen.args.indexOf('--effort') + 1] === 'xhigh', JSON.stringify(seen.args));
   check('refs and explicit controls reach the runner as argv values', seen.args.includes('258687598fbc43095537757584e666d9859cc6fe') && seen.args.includes('3b8e0cbb7794d8af008d1dcec560a5fae0ada593') && seen.args.includes('12345') && seen.args.includes('--retries') && seen.args[seen.args.indexOf('--retries') + 1] === '0' && seen.args.includes('echo "quoted"'), JSON.stringify(seen.args));
   check('runner receives the exact project root without shell quoting', path.resolve(seen.cwd) === path.resolve(project) && path.resolve(seen.projectDir) === path.resolve(project), JSON.stringify(seen));
   check('transport removes serialized temporary inputs after completion', !fs.existsSync(seen.args[seen.args.indexOf('--work-order') + 1]) && !fs.existsSync(seen.args[seen.args.indexOf('--executor-report') + 1]), JSON.stringify(seen.args));
@@ -347,6 +365,18 @@ async function main() {
       error && error.code === -32602 && /retries must be an integer 0 or 1/.test(error.message) &&
         error.data && error.data.parameter === 'retries' && !fs.existsSync(invalidRecord),
       JSON.stringify(invalidRetries.message));
+  }
+  for (const value of ['max', 'HIGH', 1, null]) {
+    const invalidEffort = await rpcCall({
+      hooksDir,
+      env: { STUB_RUNNER_RECORD: invalidRecord },
+      arguments: { work_order: 'work order', executor_report: 'executor report', effort: value },
+    });
+    const error = invalidEffort.message && invalidEffort.message.error;
+    check('effort control rejects invalid runtime value ' + JSON.stringify(value) + ' before spawning the runner',
+      error && error.code === -32602 && /effort must be high or xhigh/.test(error.message) &&
+        error.data && error.data.parameter === 'effort' && !fs.existsSync(invalidRecord),
+      JSON.stringify(invalidEffort.message));
   }
   for (const [label, value] of [['empty', ''], ['whitespace-only', '   \t  ']]) {
     const retryEnv = await rpcCall({

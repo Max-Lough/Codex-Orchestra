@@ -40,7 +40,9 @@ the review or applies fixes itself.
      runner arguments where supported; prose alone configures nothing.
 5. **Dispatch and relay.** For the Claude route, pass `work_order`,
    `executor_report`, and every explicit control as typed MCP arguments, wait
-   for the single blocking call, and relay the returned text verbatim. The
+   for the single blocking call, and relay the returned text verbatim. Omit
+   `effort` for the standard `high` review, or pass `effort` with value `xhigh`
+   when the review content is unusually large or complex. The
    reviewer independently reads the diff and reruns verification. Preserve
    every finding, engine attribution, integrity warning, attempted setting,
    and finality line.

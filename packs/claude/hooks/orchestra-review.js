@@ -32,6 +32,8 @@ const DEFAULTS = Object.freeze({
   doNotRun: [],
   integrityIgnore: [],
 });
+const CLAUDE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/\-\[\]]*$/;
+const CLAUDE_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
 function dieUsage(message) {
   process.stderr.write('ERROR: ' + message + '\n');
@@ -198,9 +200,15 @@ function settings(args, config) {
   if (args.noAuthProbe) resolved.authProbe = false;
   resolved.bin = resolved.bin.trim();
   resolved.model = resolved.model.trim();
-  resolved.effort = resolved.effort.trim();
+  resolved.effort = resolved.effort.trim().toLowerCase();
   if (!resolved.bin || !resolved.model || !resolved.effort) {
     throw new Error('Claude binary, review model, and review effort must not be empty');
+  }
+  if (!CLAUDE_MODEL.test(resolved.model)) {
+    throw new Error('review model contains unsupported characters');
+  }
+  if (!CLAUDE_EFFORTS.has(resolved.effort)) {
+    throw new Error('review effort must be low, medium, high, xhigh, or max');
   }
   if (resolved.retries > 1) throw new Error('review retries may not exceed 1');
   return resolved;

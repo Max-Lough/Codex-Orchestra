@@ -634,6 +634,18 @@ function case5LintAndScanUpdate() {
   const lint = run(master, ['--lint']);
   check('--lint validates the complete fixture master', lint.status === 0 && /sources are valid/.test(output(lint)), output(lint));
 
+  const actualTarget = temp('codex-orchestra-actual-install-');
+  const actualInstall = run(REPO, [actualTarget, '--packs', 'claude', '--no-specialists']);
+  const installedTransport = actualInstall.status === 0
+    ? fs.readFileSync(path.join(actualTarget, '.codex', 'hooks', 'orchestra-review-mcp.js'), 'utf8')
+    : '';
+  check(
+    'real pack install includes the typed high-or-xhigh review effort transport',
+    actualInstall.status === 0 && /enum: \['high', 'xhigh'\]/.test(installedTransport) &&
+      /args\.push\('--effort'/.test(installedTransport),
+    output(actualInstall)
+  );
+
   const scanRoot = temp('codex-orchestra-scan-');
   const project = path.join(scanRoot, 'nested', 'project');
   fs.mkdirSync(project, { recursive: true });

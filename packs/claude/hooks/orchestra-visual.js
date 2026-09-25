@@ -17,18 +17,40 @@ const DEFAULTS = {
   killSurvivors: true,
 };
 
-function value(argv, flag) {
-  const index = argv.indexOf(flag);
-  if (index < 0) return undefined;
-  if (index + 1 >= argv.length || String(argv[index + 1]).startsWith('--')) {
-    throw new Error(flag + ' requires a value');
+function parseArgs(argv) {
+  const keys = {
+    '--work-order': 'workOrder',
+    '--model': 'model',
+    '--effort': 'effort',
+    '--timeout-ms': 'timeoutMs',
+    '--claude-bin': 'bin',
+  };
+  const result = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (!Object.prototype.hasOwnProperty.call(keys, flag)) {
+      throw new Error('unknown option: ' + flag);
+    }
+    if (index + 1 >= argv.length || String(argv[index + 1]).startsWith('--')) {
+      throw new Error(flag + ' requires a value');
+    }
+    result[keys[flag]] = argv[++index];
   }
-  return argv[index + 1];
+  return result;
 }
 
-function positiveInteger(input, fallback) {
+function positiveInteger(input, label, fallback) {
+  if (input === undefined || input === null || input === '') return fallback;
   const number = Number(input);
-  return Number.isInteger(number) && number > 0 ? number : fallback;
+  if (!Number.isInteger(number) || number <= 0) throw new Error(label + ' must be a positive integer');
+  return number;
+}
+
+function firstDefined() {
+  for (const value of arguments) {
+    if (value !== undefined && value !== null && value !== '') return value;
+  }
+  return undefined;
 }
 
 function booleanValue(input, fallback, label) {
@@ -77,21 +99,22 @@ function readConfig(root) {
   return parsed.claude;
 }
 
-function resolveSettings(root, argv) {
+function resolveSettings(root, args) {
   const config = readConfig(root);
   const effort = String(
-    value(argv, '--effort') || process.env.ORCHESTRA_CLAUDE_VISUAL_EFFORT ||
+    args.effort || process.env.ORCHESTRA_CLAUDE_VISUAL_EFFORT ||
     config.visualEffort || DEFAULTS.effort
   ).trim().toLowerCase();
   if (!['high', 'xhigh'].includes(effort)) {
     throw new Error('visual effort must be high or xhigh');
   }
   const resolved = {
-    bin: String(value(argv, '--claude-bin') || process.env.CLAUDE_BIN || config.bin || DEFAULTS.bin).trim(),
-    model: String(value(argv, '--model') || process.env.ORCHESTRA_CLAUDE_VISUAL_MODEL || config.visualModel || DEFAULTS.model).trim(),
+    bin: String(args.bin || process.env.CLAUDE_BIN || config.bin || DEFAULTS.bin).trim(),
+    model: String(args.model || process.env.ORCHESTRA_CLAUDE_VISUAL_MODEL || config.visualModel || DEFAULTS.model).trim(),
     effort,
     timeoutMs: positiveInteger(
-      value(argv, '--timeout-ms') || process.env.ORCHESTRA_CLAUDE_VISUAL_TIMEOUT_MS || config.visualTimeoutMs,
+      firstDefined(args.timeoutMs, process.env.ORCHESTRA_CLAUDE_VISUAL_TIMEOUT_MS, config.visualTimeoutMs),
+      'visual timeout',
       DEFAULTS.timeoutMs
     ),
     killSurvivors: booleanValue(
@@ -193,9 +216,10 @@ function main() {
   let cfg;
   let workOrder;
   try {
-    const workOrderPath = value(argv, '--work-order');
+    const args = parseArgs(argv);
+    const workOrderPath = args.workOrder;
     if (!workOrderPath) throw new Error('--work-order is required');
-    cfg = resolveSettings(root, argv);
+    cfg = resolveSettings(root, args);
     workOrder = readWorkOrder(root, workOrderPath);
   } catch (error) {
     return unavailable(error.message);

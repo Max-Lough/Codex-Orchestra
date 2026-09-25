@@ -632,6 +632,20 @@ function caseLaunchBoundaryAndDiagnostics() {
     );
   }
 
+  for (const item of [
+    { name: 'trailing-backslash model', args: ['--model', 'opus\\'], pattern: /review model contains unsupported characters/ },
+    { name: 'unknown effort', args: ['--effort', 'turbo'], pattern: /review effort must be/ },
+  ]) {
+    const fixture = makeRepo();
+    const result = invoke(fixture, reviewArgs(fixture).concat(item.args));
+    check(
+      'review rejects ' + item.name + ' during configuration',
+      /VERDICT: REVIEW_UNAVAILABLE/.test(result.stdout) &&
+        /STAGE: configuration/.test(result.stdout) && item.pattern.test(result.stdout),
+      result.stdout + result.stderr
+    );
+  }
+
   if (process.platform === 'win32') {
     const fixture = makeRepo();
     const marker = path.join(fixture.root, 'percent-injection-marker.txt');
@@ -646,9 +660,9 @@ function caseLaunchBoundaryAndDiagnostics() {
       20000
     );
     check(
-      'review rejects percent-bearing shim tokens before the engine launches',
+      'review rejects percent-bearing model input before the engine launches',
       /VERDICT: REVIEW_UNAVAILABLE/.test(result.stdout) &&
-        /percent characters are not supported in Windows command-shim tokens/.test(result.stdout) &&
+        /review model contains unsupported characters/.test(result.stdout) &&
         !fs.existsSync(marker) && !fs.existsSync(record),
       result.stdout + result.stderr
     );

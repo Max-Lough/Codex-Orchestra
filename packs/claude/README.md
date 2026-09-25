@@ -39,7 +39,8 @@ exception does not make the Director the reviewer: the tool starts a fresh,
 independent Claude CLI process. The tool accepts the
 work order, executor report, refs, and explicit controls as typed arguments,
 writes its own temporary input files, and blocks until the runner process has
-closed. It then relays the runner's stdout verbatim.
+closed. Review effort defaults to `high`; pass `effort` with value `xhigh` for
+unusually large or complex content. It then relays the runner's stdout verbatim.
 
 ## Final review report contract
 
@@ -131,8 +132,9 @@ line, while raw stdout/stderr are independently represented by one bounded,
 redacted head-and-tail preview so both the beginning and failure suffix survive.
 A valid runner
 report is returned byte-for-byte; the Director must not append its own text.
-Its `retries` argument is strictly a JSON integer `0` or `1`; invalid runtime
-types or values return an MCP invalid-parameters error before the runner starts.
+Its `effort` argument is strictly `high` or `xhigh`, and `retries` is strictly a
+JSON integer `0` or `1`; invalid runtime types or values return an MCP
+invalid-parameters error before the runner starts.
 
 ## Configuration
 
@@ -174,7 +176,7 @@ default.
 |---|---|---|
 | `bin` | `CLAUDE_BIN` | `claude` |
 | `reviewModel` | `ORCHESTRA_CLAUDE_REVIEW_MODEL` | `opus` |
-| `reviewEffort` | `ORCHESTRA_CLAUDE_REVIEW_EFFORT` | `high` |
+| `reviewEffort` | `ORCHESTRA_CLAUDE_REVIEW_EFFORT` | `high` (`xhigh` selectable per MCP call) |
 | `visualModel` | `ORCHESTRA_CLAUDE_VISUAL_MODEL` | `opus` |
 | `visualEffort` | `ORCHESTRA_CLAUDE_VISUAL_EFFORT` | `high` (`xhigh` selectable) |
 | `visualTimeoutMs` | `ORCHESTRA_CLAUDE_VISUAL_TIMEOUT_MS` | `1800000` |

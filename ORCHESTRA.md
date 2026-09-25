@@ -11,12 +11,13 @@ quietly become the worker.
 
 ## 1. Activation
 
-- Director mode activates only when the primary session transcript positively
-  identifies `gpt-6-astra` as the driving model. The observation latches for
-  that transcript: later model entries do not silently disable enforcement.
-- A positively identified non-Astra model, or missing/unreadable/unknown model
-  evidence, leaves Orchestra dormant. The session acts as ordinary Codex with
-  no context injection or Director denials.
+- Director mode follows the latest primary-session
+  `turn_context.payload.model`. It activates when that value positively
+  identifies `gpt-6-astra`, and deactivates when a later turn context selects
+  Sol, Luna, or any other non-Astra model.
+- Missing, unreadable, or unknown latest-model evidence leaves Orchestra
+  dormant. The session acts as ordinary Codex with no context injection or
+  Director denials.
 - Spawned agents are workers, never Directors. They follow their selected
   profile and the self-contained order they receive.
 - A Codex process launched by Claude-Orchestra as
@@ -154,8 +155,8 @@ Review routing follows authorship:
 - GPT-authored work → the Director calls the installed project-scoped
   `mcp__orchestra_claude_review__orchestra_review` tool exactly once. The tool
   blocks through a fresh Opus 5.5 review and returns its report verbatim.
-  Standard review effort is `high`; select `xhigh` explicitly for unusually
-  large or complex review content.
+  Standard review effort is `high`; pass the typed `effort` argument with value
+  `xhigh` for unusually large or complex review content.
 - Anthropic-authored work → fresh-context native `reviewer`, keeping author and
   reviewer in different model families.
 - No Claude pack → native `reviewer`; state once in REPORT that cross-family
@@ -224,8 +225,9 @@ outside explicit harness install, update, or removal work.
   not expand Claude-style instruction imports.
 - `.codex/hooks.json` wires `SessionStart` and `PreToolUse` to
   `.codex/hooks/orchestra-guard.js`. The user must trust project hooks. The
-  guard reads Codex `turn_context.payload.model` transcript entries and only
-  activates on positive GPT-6 Astra evidence; unknown evidence fails open.
+  guard reads the latest Codex `turn_context.payload.model` transcript entry
+  and only activates on positive GPT-6 Astra evidence; a later non-Astra model
+  deactivates it, and unknown latest evidence fails open.
 - The `claude` pack installs a marked project-level MCP block in
   `.codex/config.toml`. Codex 0.153.x does not reliably propagate an MCP server
   declared only inside a custom-agent TOML, so review routing uses this

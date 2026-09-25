@@ -8,10 +8,9 @@
  * agent profiles disable hooks in their spawned sessions, so executors and
  * reviewers can use their role-appropriate tools.
  *
- * Director law activates only after the session transcript positively names
- * GPT-6 Astra as the driving model. Non-Astra and undetermined sessions run as
- * ordinary Codex sessions. Once an Astra turn-context entry is observed in a
- * primary-session transcript, the observation latches for the read window.
+ * Director law activates only when the latest primary-session turn-context
+ * entry positively names GPT-6 Astra as the driving model. Non-Astra and
+ * undetermined sessions run as ordinary Codex sessions.
  *
  * This is intentionally a guardrail rather than a security boundary. Hosted
  * tools and specialized paths may not traverse local hooks. The protocol in
@@ -30,9 +29,7 @@ const PLANS_DIRNAME = 'plans';
 // { type: turn_context, payload: { model: ... } }. Provider-prefixed
 // ids are accepted, but lookalike suffixes/prefixes are not positive evidence.
 const ASTRA_MODEL = /^(?:[^/:]+[/:])*gpt-6-astra(?:\[[^\]]+\])?$/i;
-const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
-const TRANSCRIPT_HEAD_BYTES = 2 * 1024 * 1024;
-const TRANSCRIPT_TAIL_BYTES = 8 * 1024 * 1024;
+const TRANSCRIPT_CHUNK_BYTES = 1024 * 1024;
 
 // Canonical Codex names plus compatibility aliases used by local clients.
 const BLOCKED = new Set([
@@ -144,58 +141,60 @@ function isSubagent(input) {
   return role !== '' && role !== 'director';
 }
 
-function transcriptLines(input) {
+function classifyTurnContext(rawLine) {
+  const line = rawLine.trim();
+  if (line === '') return null;
+  let entry;
   try {
-    const transcript = input.transcript_path;
-    if (typeof transcript !== 'string' || transcript === '') return null;
-    const stat = fs.statSync(transcript);
-    if (!stat.isFile() || stat.size === 0) return null;
-    if (stat.size <= MAX_TRANSCRIPT_BYTES) {
-      return fs.readFileSync(transcript, 'utf8').split('\n');
-    }
-
-    const fd = fs.openSync(transcript, 'r');
-    try {
-      const headSize = Math.min(TRANSCRIPT_HEAD_BYTES, stat.size);
-      const tailSize = Math.min(TRANSCRIPT_TAIL_BYTES, stat.size - headSize);
-      const head = Buffer.alloc(headSize);
-      fs.readSync(fd, head, 0, headSize, 0);
-      const tail = Buffer.alloc(tailSize);
-      if (tailSize > 0) {
-        fs.readSync(fd, tail, 0, tailSize, stat.size - tailSize);
-      }
-      return head.toString('utf8').split('\n').concat(tail.toString('utf8').split('\n'));
-    } finally {
-      fs.closeSync(fd);
-    }
+    entry = JSON.parse(line);
   } catch (_) {
     return null;
   }
+  if (!entry || entry.type !== 'turn_context' || !entry.payload) return null;
+  const model = entry.payload.model;
+  if (typeof model !== 'string' || model === '' || model === '<synthetic>') {
+    return { state: 'unknown' };
+  }
+  return ASTRA_MODEL.test(model)
+    ? { state: 'astra', model }
+    : { state: 'other', model };
 }
 
 function drivingModel(input) {
-  const lines = transcriptLines(input);
-  if (lines === null) return { state: 'unknown' };
-  let latest = null;
-  let astra = null;
-  for (const rawLine of lines) {
-    const line = rawLine.trim();
-    if (line === '') continue;
-    let entry;
-    try {
-      entry = JSON.parse(line);
-    } catch (_) {
-      continue;
+  let fd;
+  try {
+    const transcript = input.transcript_path;
+    if (typeof transcript !== 'string' || transcript === '') return { state: 'unknown' };
+    const stat = fs.statSync(transcript);
+    if (!stat.isFile() || stat.size === 0) return { state: 'unknown' };
+
+    fd = fs.openSync(transcript, 'r');
+    let position = stat.size;
+    let suffix = Buffer.alloc(0);
+    while (position > 0) {
+      const size = Math.min(TRANSCRIPT_CHUNK_BYTES, position);
+      position -= size;
+      const chunk = Buffer.allocUnsafe(size);
+      fs.readSync(fd, chunk, 0, size, position);
+      const data = suffix.length ? Buffer.concat([chunk, suffix]) : chunk;
+      let end = data.length;
+      for (let index = data.length - 1; index >= 0; index -= 1) {
+        if (data[index] !== 0x0a) continue;
+        const evidence = classifyTurnContext(data.subarray(index + 1, end).toString('utf8'));
+        if (evidence !== null) return evidence;
+        end = index;
+      }
+      suffix = data.subarray(0, end);
     }
-    if (!entry || entry.type !== 'turn_context' || !entry.payload) continue;
-    const model = entry.payload.model;
-    if (typeof model !== 'string' || model === '' || model === '<synthetic>') continue;
-    latest = model;
-    if (ASTRA_MODEL.test(model)) astra = model;
+    const evidence = classifyTurnContext(suffix.toString('utf8'));
+    return evidence === null ? { state: 'unknown' } : evidence;
+  } catch (_) {
+    return { state: 'unknown' };
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) { /* best effort */ }
+    }
   }
-  if (astra !== null) return { state: 'astra', model: astra };
-  if (latest !== null) return { state: 'other', model: latest };
-  return { state: 'unknown' };
 }
 
 function orchestraActive(input) {

@@ -12,10 +12,10 @@ INTAKE -> RECON -> PLAN -> EXECUTE -> REVIEW -> REPORT
 
 When GPT-6 Astra drives the primary Codex task, it is the Director: it
 decomposes, delegates, arbitrates, and communicates while custom agents do
-repository work. The project hook activates only on positive Astra transcript
-evidence and latches that observation. Non-Astra and unknown sessions behave as
-ordinary Codex. Every Orchestra campaign crosses an independent review gate
-before it is reported complete.
+repository work. The project hook follows the latest primary-session model:
+Astra activates Orchestra, while a later Sol, Luna, other non-Astra, or unknown
+selection leaves the session as ordinary Codex. Every Orchestra campaign
+crosses an independent review gate before it is reported complete.
 
 ## Company
 
@@ -147,8 +147,9 @@ Review follows authorship, not a project-level opt-out switch:
 
 - GPT-authored work uses the project-scoped Claude review MCP transport when
   the pack is installed. The standard policy is Opus 5.5/high; the executable
-  model id is the Claude CLI's stable `opus` alias. Select xhigh explicitly for
-  particularly large or complex review content.
+  model id is the Claude CLI's stable `opus` alias. Pass the transport's typed
+  `effort` argument with value `xhigh` for particularly large or complex review
+  content.
 - Anthropic-authored work uses the fresh native `reviewer` so author and
   reviewer remain in different model families.
 - If the pack is absent, the native reviewer runs and the final report notes
@@ -240,11 +241,11 @@ inert change may narrow verification, but it does not skip review.
 `.codex/hooks.json` registers the Director guard for `SessionStart` and
 `PreToolUse`. Codex asks the user to trust project hooks before they run. The
 guard reads Codex `turn_context.payload.model` transcript entries. It blocks
-repository reads, searches, edits, and commands only after positive GPT-6
-Astra evidence; that observation latches across later entries. Positive
-non-Astra evidence and missing, unreadable, or unknown evidence fail open so
-the primary task behaves as ordinary Codex. Custom worker profiles run with
-hooks disabled and their own role instructions.
+repository reads, searches, edits, and commands only when the latest primary
+turn context positively identifies GPT-6 Astra. A later non-Astra model switch
+deactivates the guard. Missing, unreadable, or unknown latest evidence fails
+open so the primary task behaves as ordinary Codex. Custom worker profiles run
+with hooks disabled and their own role instructions.
 
 The Director can directly manage goal state and Markdown plans beneath
 `.codex/plans/`. Plan paths are checked for lexical containment, real-path
