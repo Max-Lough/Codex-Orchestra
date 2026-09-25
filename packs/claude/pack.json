@@ -1,17 +1,18 @@
 {
   "name": "claude",
   "title": "Anthropic review interface",
-  "summary": "Adds mandatory-by-policy cross-family review of OpenAI-authored campaigns through a fresh Claude CLI session, plus an optional Anthropic planning counterpart.",
+  "summary": "Adds Opus 5.5 cross-family review of GPT-authored campaigns, an optional Anthropic planning counterpart, and a user-routable Opus visual-development executor.",
   "requires": {
     "bin": [
-      "claude (Claude CLI) - for cross-family review and planner-claude"
+      "claude (Claude CLI) - for cross-family review, planner-claude, and modeler-claude"
     ],
     "env": [
       "ANTHROPIC_API_KEY or an authenticated Claude CLI login"
     ]
   },
   "notes": [
-    "OpenAI-authored campaigns route through one blocking project-scoped MCP transport call when this pack is installed.",
+    "GPT-authored campaigns route through one blocking project-scoped Opus 5.5 MCP transport call when this pack is installed.",
+    "Visual-development orders can explicitly route through modeler-claude to Opus 5.5/high or xhigh.",
     "The Director transports the order; a fresh Claude CLI process performs the independent review.",
     "Check availability with: node .codex/hooks/orchestra-review.js --doctor",
     "A failed Claude lane is REVIEW_UNAVAILABLE, never approval; route to the fresh-context native OpenAI reviewer and report the cross-family fallback."

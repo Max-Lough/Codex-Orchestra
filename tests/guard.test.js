@@ -15,13 +15,22 @@ function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-orchestra-guard-'));
   fs.mkdirSync(path.join(root, '.git'));
   fs.mkdirSync(path.join(root, '.codex', 'plans'), { recursive: true });
+  fs.writeFileSync(
+    path.join(root, '.codex', 'test-transcript.jsonl'),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-6-astra' } }) + '\n'
+  );
   return root;
 }
 
 function run(root, input, env = {}) {
+  const payload = typeof input === 'string' ? input : JSON.stringify({
+    cwd: root,
+    transcript_path: path.join(root, '.codex', 'test-transcript.jsonl'),
+    ...input,
+  });
   const result = spawnSync(process.execPath, [GUARD], {
     cwd: root,
-    input: typeof input === 'string' ? input : JSON.stringify({ cwd: root, ...input }),
+    input: payload,
     encoding: 'utf8',
     env: { ...process.env, ORCHESTRA_ROLE: '', ORCHESTRA_PAUSE: '', ...env },
   });
@@ -46,10 +55,52 @@ function test(name, fn) {
   }
 }
 
-test('SessionStart injects Director context', () => {
+test('SessionStart injects Director context for Astra', () => {
   const root = fixture();
   const output = run(root, { hook_event_name: 'SessionStart' });
   assert.match(output.hookSpecificOutput.additionalContext, /primary task is the Director/);
+});
+
+test('non-Astra and unknown sessions bypass context and denials', () => {
+  const root = fixture();
+  const transcript = path.join(root, '.codex', 'test-transcript.jsonl');
+  fs.writeFileSync(transcript, JSON.stringify({
+    type: 'turn_context', payload: { model: 'gpt-6-sol' },
+  }) + '\n');
+  assert.strictEqual(run(root, { hook_event_name: 'SessionStart' }), null);
+  assert.strictEqual(run(root, {
+    hook_event_name: 'PreToolUse', tool_name: 'exec_command', tool_input: {},
+  }), null);
+  assert.strictEqual(run(root, {
+    hook_event_name: 'PreToolUse', tool_name: 'Read', transcript_path: '',
+  }), null);
+  fs.writeFileSync(transcript, '{not-json\n');
+  assert.strictEqual(run(root, {
+    hook_event_name: 'PreToolUse', tool_name: 'apply_patch', tool_input: {},
+  }), null);
+});
+
+test('Astra observation latches across later non-Astra turn contexts', () => {
+  const root = fixture();
+  const transcript = path.join(root, '.codex', 'test-transcript.jsonl');
+  fs.writeFileSync(transcript, [
+    JSON.stringify({ type: 'turn_context', payload: { model: 'openai/gpt-6-astra' } }),
+    JSON.stringify({ type: 'turn_context', payload: { model: 'gpt-6-sol' } }),
+  ].join('\n') + '\n');
+  denied(run(root, {
+    hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: {},
+  }), /does not use Read/);
+});
+
+test('lookalike model names are not positive Astra evidence', () => {
+  const root = fixture();
+  const transcript = path.join(root, '.codex', 'test-transcript.jsonl');
+  for (const model of ['not-gpt-6-astra', 'gpt-6-astra-preview', 'gpt-6-sol']) {
+    fs.writeFileSync(transcript, JSON.stringify({ type: 'turn_context', payload: { model } }) + '\n');
+    assert.strictEqual(run(root, {
+      hook_event_name: 'PreToolUse', tool_name: 'exec_command', tool_input: {},
+    }), null, model);
+  }
 });
 
 test('primary Director cannot read repository files', () => {

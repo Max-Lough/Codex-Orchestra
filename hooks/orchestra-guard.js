@@ -8,6 +8,11 @@
  * agent profiles disable hooks in their spawned sessions, so executors and
  * reviewers can use their role-appropriate tools.
  *
+ * Director law activates only after the session transcript positively names
+ * GPT-6 Astra as the driving model. Non-Astra and undetermined sessions run as
+ * ordinary Codex sessions. Once an Astra turn-context entry is observed in a
+ * primary-session transcript, the observation latches for the read window.
+ *
  * This is intentionally a guardrail rather than a security boundary. Hosted
  * tools and specialized paths may not traverse local hooks. The protocol in
  * AGENTS.md remains authoritative.
@@ -20,6 +25,14 @@ const path = require('path');
 const CONFIG_BASENAME = 'orchestra.json';
 const PAUSE_BASENAME = 'orchestra.pause';
 const PLANS_DIRNAME = 'plans';
+
+// Codex JSONL transcripts record the selected model in
+// { type: turn_context, payload: { model: ... } }. Provider-prefixed
+// ids are accepted, but lookalike suffixes/prefixes are not positive evidence.
+const ASTRA_MODEL = /^(?:[^/:]+[/:])*gpt-6-astra(?:\[[^\]]+\])?$/i;
+const MAX_TRANSCRIPT_BYTES = 64 * 1024 * 1024;
+const TRANSCRIPT_HEAD_BYTES = 2 * 1024 * 1024;
+const TRANSCRIPT_TAIL_BYTES = 8 * 1024 * 1024;
 
 // Canonical Codex names plus compatibility aliases used by local clients.
 const BLOCKED = new Set([
@@ -47,6 +60,7 @@ const DIRECTOR_SAFE_NESTED = new Set([
 const EXTERNAL_WORKER_ROLES = new Set([
   'reviewer-codex-external',
   'executor-codex-external',
+  'executor-claude-visual-external',
   'planner-codex-external',
 ]);
 const FORBIDDEN_EXEC_IDENTIFIERS = new Set([
@@ -129,6 +143,64 @@ function isSubagent(input) {
   const role = (process.env.ORCHESTRA_ROLE || '').trim().toLowerCase();
   if (EXTERNAL_WORKER_ROLES.has(role)) return true;
   return role !== '' && role !== 'director';
+}
+
+function transcriptLines(input) {
+  try {
+    const transcript = input.transcript_path;
+    if (typeof transcript !== 'string' || transcript === '') return null;
+    const stat = fs.statSync(transcript);
+    if (!stat.isFile() || stat.size === 0) return null;
+    if (stat.size <= MAX_TRANSCRIPT_BYTES) {
+      return fs.readFileSync(transcript, 'utf8').split('\n');
+    }
+
+    const fd = fs.openSync(transcript, 'r');
+    try {
+      const headSize = Math.min(TRANSCRIPT_HEAD_BYTES, stat.size);
+      const tailSize = Math.min(TRANSCRIPT_TAIL_BYTES, stat.size - headSize);
+      const head = Buffer.alloc(headSize);
+      fs.readSync(fd, head, 0, headSize, 0);
+      const tail = Buffer.alloc(tailSize);
+      if (tailSize > 0) {
+        fs.readSync(fd, tail, 0, tailSize, stat.size - tailSize);
+      }
+      return head.toString('utf8').split('\n').concat(tail.toString('utf8').split('\n'));
+    } finally {
+      fs.closeSync(fd);
+    }
+  } catch (_) {
+    return null;
+  }
+}
+
+function drivingModel(input) {
+  const lines = transcriptLines(input);
+  if (lines === null) return { state: 'unknown' };
+  let latest = null;
+  let astra = null;
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (line === '') continue;
+    let entry;
+    try {
+      entry = JSON.parse(line);
+    } catch (_) {
+      continue;
+    }
+    if (!entry || entry.type !== 'turn_context' || !entry.payload) continue;
+    const model = entry.payload.model;
+    if (typeof model !== 'string' || model === '' || model === '<synthetic>') continue;
+    latest = model;
+    if (ASTRA_MODEL.test(model)) astra = model;
+  }
+  if (astra !== null) return { state: 'astra', model: astra };
+  if (latest !== null) return { state: 'other', model: latest };
+  return { state: 'unknown' };
+}
+
+function orchestraActive(input) {
+  return drivingModel(input).state === 'astra';
 }
 
 function compileRegexes(values) {
@@ -584,6 +656,7 @@ function main(raw) {
 
   if (event === 'SessionStart') {
     if (isSubagent(input)) return allow();
+    if (!orchestraActive(input)) return allow();
     if (isPaused(root)) {
       return sessionContext(
         'Orchestra is paused for this project. Do not claim independent ' +
@@ -601,6 +674,7 @@ function main(raw) {
 
   if (event !== 'PreToolUse') return allow();
   if (isPaused(root) || isSubagent(input)) return allow();
+  if (!orchestraActive(input)) return allow();
 
   const toolName = input.tool_name;
   if (typeof toolName !== 'string' || toolName === '') return allow();

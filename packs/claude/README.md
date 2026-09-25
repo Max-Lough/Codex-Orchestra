@@ -2,8 +2,8 @@
 
 This optional pack supplies the opposite-family judgment lane when Codex is in
 the Director's chair. OpenAI agents still direct, scout, investigate, and
-execute. When the pack is installed, an OpenAI-authored campaign goes through
-the project-scoped Claude review MCP transport by default; Claude-authored work
+execute. When the pack is installed, a GPT-authored campaign goes through
+the project-scoped Opus 5.5 review MCP transport by default; Anthropic-authored work
 goes to the fresh-context native OpenAI reviewer so author and reviewer remain
 on different providers.
 
@@ -13,7 +13,23 @@ node .codex/hooks/orchestra-review.js --doctor
 ```
 
 The pack also retains `planner-claude`, the optional read-only Anthropic
-counterpart for a cross-family planning round.
+counterpart for a cross-family planning round, and installs `modeler-claude`,
+an explicit user-routable Opus 5.5 visual-development executor launcher.
+
+## Visual executor invocation
+
+Route a self-contained Blender/Godot or related visual-development order to
+the `modeler-claude` profile when the user wants an Anthropic partner to Astra.
+The launcher calls this runner exactly once and relays its report verbatim:
+
+```bash
+node .codex/hooks/orchestra-visual.js --work-order .codex/plans/visual-order.md
+```
+
+The stable executable model alias is `opus`; harness policy identifies that
+alias as Opus 5.5. Effort defaults to `high`. Add `--effort xhigh` only for an
+explicitly large or complex visual order. The executor must return inspectable
+renders/exports/logs and mesh, material, texture, collider, and LOD evidence.
 
 ## Review invocation
 
@@ -134,6 +150,9 @@ Durable settings live under `claude` in `.codex/orchestra.json`:
     "bin": "claude",
     "reviewModel": "opus",
     "reviewEffort": "high",
+    "visualModel": "opus",
+    "visualEffort": "high",
+    "visualTimeoutMs": 1800000,
     "reviewTimeoutMs": 1800000,
     "reviewRetries": 0,
     "reviewKillSurvivors": true,
@@ -155,6 +174,9 @@ default.
 | `bin` | `CLAUDE_BIN` | `claude` |
 | `reviewModel` | `ORCHESTRA_CLAUDE_REVIEW_MODEL` | `opus` |
 | `reviewEffort` | `ORCHESTRA_CLAUDE_REVIEW_EFFORT` | `high` |
+| `visualModel` | `ORCHESTRA_CLAUDE_VISUAL_MODEL` | `opus` |
+| `visualEffort` | `ORCHESTRA_CLAUDE_VISUAL_EFFORT` | `high` (`xhigh` selectable) |
+| `visualTimeoutMs` | `ORCHESTRA_CLAUDE_VISUAL_TIMEOUT_MS` | `1800000` |
 | `reviewTimeoutMs` | `ORCHESTRA_CLAUDE_REVIEW_TIMEOUT_MS` | `1800000` |
 | `reviewRetries` | `ORCHESTRA_CLAUDE_REVIEW_RETRIES` | `0` |
 | `reviewKillSurvivors` | `ORCHESTRA_CLAUDE_REVIEW_KILL_SURVIVORS` | `true` |

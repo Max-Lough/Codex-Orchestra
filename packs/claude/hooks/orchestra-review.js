@@ -20,7 +20,7 @@ const { validateClaudeReport } = require('./orchestra-review-report');
 
 const DEFAULTS = Object.freeze({
   bin: 'claude',
-  model: 'opus',
+  model: 'opus', // Stable Claude CLI alias; harness policy is Opus 5.5.
   effort: 'high',
   timeoutMs: 1800000,
   retries: 0,
@@ -519,7 +519,7 @@ function buildPrompt(options) {
     : 'LIVE SCOPE\nReview the current working tree exactly as it exists now.\n';
   return `You are the independent Anthropic Reviewer in the Orchestra harness.
 The author and Director are OpenAI Codex agents. This is the mandatory
-cross-family review of an OpenAI-authored campaign. Presume the change is
+cross-family review of a GPT-authored campaign. Presume the change is
 broken until you fail to break it. Work only in the current repository.
 
 ${scope}
@@ -832,7 +832,7 @@ function main() {
     for (const item of outcome.changed || []) integrity.add(item);
     if (outcome.ok) {
       process.stdout.write(
-        'REVIEW ENGINE: Claude CLI (requested model: ' + cfg.model + ', effort: ' + cfg.effort +
+        'REVIEW ENGINE: Claude CLI (requested model: ' + cfg.model + ', policy: Opus 5.5, effort: ' + cfg.effort +
           ', timeout: ' + cfg.timeoutMs + 'ms, fresh context, tier: ' + tier +
           ', checkout: ' + outcome.checkout + ')\n' +
         finality(attempt, maximum) + '\n' +

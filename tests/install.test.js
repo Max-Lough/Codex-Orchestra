@@ -96,15 +96,15 @@ function makeMaster() {
   fs.copyFileSync(SOURCE_INSTALLER, path.join(root, 'install.js'));
   fs.copyFileSync(SOURCE_COMPAT, path.join(root, 'install-codex.js'));
   write(path.join(root, 'VERSION'), '3.0.0\n');
-  write(path.join(root, 'config.toml'), 'model = "gpt-5.6-sol"\n[features]\nhooks = true\n');
+  write(path.join(root, 'config.toml'), 'model = "gpt-6-astra"\n[features]\nhooks = true\n');
   write(path.join(root, 'ORCHESTRA.md'), '# Orchestra\n\n<!-- Installed by the Orchestra harness. -->\n\nCodex directs.\n');
   writeJson(path.join(root, 'hooks.json'), {
     description: 'Codex-Orchestra fixture hooks.',
     hooks: { PreToolUse: [hookEntry('node .codex/hooks/orchestra-guard.js', 'Orchestra guard')] },
   });
-  write(path.join(root, 'agents', 'scout.toml'), 'name = "scout"\nmodel = "gpt-5.6-luna"\n');
-  write(path.join(root, 'agents', 'executor.toml'), 'name = "executor"\nmodel = "gpt-5.6-terra"\n');
-  write(path.join(root, 'agents', 'specialists', 'modeler.toml'), 'name = "modeler"\nmodel = "gpt-5.6-terra"\n');
+  write(path.join(root, 'agents', 'scout.toml'), 'name = "scout"\nmodel = "gpt-6-luna"\n');
+  write(path.join(root, 'agents', 'executor.toml'), 'name = "executor"\nmodel = "gpt-6-sol"\n');
+  write(path.join(root, 'agents', 'specialists', 'modeler.toml'), 'name = "modeler"\nmodel = "gpt-6-astra"\n');
   write(
     path.join(root, 'hooks', 'orchestra-guard.js'),
     "'use strict'; const fs = require('fs'); console.log(fs.existsSync(__filename) ? 'COMMONJS_OK' : 'NO');\n"
@@ -119,11 +119,12 @@ function makeMaster() {
     path.join(root, 'packs', 'claude', 'config.toml'),
     '[mcp_servers.orchestra_claude_review]\ncommand = "node"\nargs = [".codex/hooks/orchestra-review-mcp.js"]\n'
   );
-  write(path.join(root, 'packs', 'claude', 'agents', 'reviewer-claude.toml'), 'name = "reviewer-claude"\nmodel = "claude-opus-4-1"\n');
+  write(path.join(root, 'packs', 'claude', 'agents', 'modeler-claude.toml'), 'name = "modeler-claude"\nmodel = "gpt-6-luna"\n');
   write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-jobrun.js'), "'use strict';\n");
   write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-review.js'), "'use strict';\n");
   write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-review-mcp.js'), "'use strict';\n");
   write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-ultraplan.js'), "'use strict';\n");
+  write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-visual.js'), "'use strict';\n");
   write(path.join(root, 'packs', 'claude', 'skills', 'cross-compare-plan', 'SKILL.md'), '# Pack skill\n');
   write(path.join(root, 'packs', 'claude', 'skills', 'cross-compare-plan', 'references', 'protocol.md'), '# Protocol\n');
   write(path.join(root, 'packs', '_TEMPLATE', 'pack.json'), '{not selected}\n');
@@ -228,19 +229,19 @@ function case3DeselectRetireAndUninstall() {
   const installed = run(master, [target, '--packs', 'claude', '--specialists', 'modeler']);
   check('selected install succeeds', installed.status === 0, output(installed));
   check('selected pack installs its project-scoped MCP block', /ORCHESTRA:PACK:claude:BEGIN/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')), fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8'));
-  const retiredTarget = path.join(target, '.codex', 'agents', 'reviewer-claude.toml');
-  check('pack agent, supervised review/planning hooks, blocking transport, and nested pack skill installed', fs.existsSync(retiredTarget) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-jobrun.js')) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-ultraplan.js')) && fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan', 'references', 'protocol.md')), census(target).join('\n'));
+  const retiredTarget = path.join(target, '.codex', 'agents', 'modeler-claude.toml');
+  check('pack agent, supervised review/planning/visual hooks, blocking transport, and nested pack skill installed', fs.existsSync(retiredTarget) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-jobrun.js')) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-ultraplan.js')) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-visual.js')) && fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan', 'references', 'protocol.md')), census(target).join('\n'));
   write(path.join(target, '.codex', 'agents', 'user-owned.toml'), 'name = "user-owned"\n');
 
-  fs.unlinkSync(path.join(master, 'packs', 'claude', 'agents', 'reviewer-claude.toml'));
+  fs.unlinkSync(path.join(master, 'packs', 'claude', 'agents', 'modeler-claude.toml'));
   const update = run(master, [target]);
   check('update after source retirement succeeds', update.status === 0, output(update));
   check('receipt prunes a retired managed file', !fs.existsSync(retiredTarget) && /pruned retired\/deselected managed file/.test(output(update)), output(update));
 
   const deselect = run(master, [target, '--no-packs', '--no-specialists']);
   check('explicit deselection succeeds', deselect.status === 0, output(deselect));
-  check('pack hooks, skill, and specialist are removed', !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-jobrun.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-ultraplan.js')) && !fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan')) && !fs.existsSync(path.join(target, '.codex', 'agents', 'modeler.toml')), census(target).join('\n'));
-  check('pack deselection removes only its managed config block', !/ORCHESTRA:PACK:claude/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')) && /gpt-5\.6-sol/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')), fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8'));
+  check('pack hooks, skill, and specialist are removed', !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-jobrun.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-ultraplan.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-visual.js')) && !fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan')) && !fs.existsSync(path.join(target, '.codex', 'agents', 'modeler.toml')), census(target).join('\n'));
+  check('pack deselection removes only its managed config block', !/ORCHESTRA:PACK:claude/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')) && /gpt-6-astra/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')), fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8'));
   check('unknown adjacent file survives pruning', fs.existsSync(path.join(target, '.codex', 'agents', 'user-owned.toml')), '');
 
   const uninstall = run(master, [target, '--uninstall']);
@@ -606,7 +607,7 @@ function case7CanonicalLineEndingsAndLegacyHashes() {
   section('7. Managed text is canonical LF and legacy CRLF receipts remain removable');
   const master = makeMaster();
   const sourceAgent = path.join(master, 'agents', 'scout.toml');
-  const lf = 'name = "scout"\nmodel = "gpt-5.6-luna"\n';
+  const lf = 'name = "scout"\nmodel = "gpt-6-luna"\n';
   const crlf = lf.replace(/\n/g, '\r\n');
   fs.writeFileSync(sourceAgent, crlf, 'utf8');
   const target = temp('codex-orchestra-target-');

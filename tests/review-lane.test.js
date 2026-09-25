@@ -408,6 +408,20 @@ function casePromptAndPinnedCheckout() {
 
 function caseEnvironmentPrecedence() {
   section('3. Environment beats project config when no flag is present');
+  const defaults = makeRepo();
+  const defaultRecord = path.join(defaults.root, 'default-record.json');
+  const defaultResult = invoke(defaults, reviewArgs(defaults).concat([
+    '--head-ref', defaults.head, '--retries', '0',
+  ]), { STUB_RECORD: defaultRecord });
+  const defaultSeen = readRecord(defaultRecord);
+  check(
+    'standard review effectively uses the stable Opus alias at high effort',
+    defaultResult.status === 0 &&
+      defaultSeen.args[defaultSeen.args.indexOf('--model') + 1] === 'opus' &&
+      defaultSeen.args[defaultSeen.args.indexOf('--effort') + 1] === 'high' &&
+      /policy: Opus 5\.5, effort: high/.test(defaultResult.stdout),
+    defaultResult.stdout + '\n' + JSON.stringify(defaultSeen.args)
+  );
   const fixture = makeRepo();
   const record = path.join(fixture.root, 'record.json');
   writeConfig(fixture, { reviewModel: 'config-model', reviewEffort: 'low', reviewRetries: 0 });
@@ -418,6 +432,7 @@ function caseEnvironmentPrecedence() {
   });
   const seen = readRecord(record);
   check('environment-selected model and effort are applied', result.status === 0 && seen.args.includes('env-model') && seen.args.includes('xhigh'), JSON.stringify(seen.args));
+  check('xhigh review remains explicitly selectable', seen.args[seen.args.indexOf('--effort') + 1] === 'xhigh', JSON.stringify(seen.args));
 }
 
 function caseUnavailableOutcomes() {

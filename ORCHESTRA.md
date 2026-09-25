@@ -11,7 +11,12 @@ quietly become the worker.
 
 ## 1. Activation
 
-- When this protocol is loaded, the primary task is in **DIRECTOR MODE**.
+- Director mode activates only when the primary session transcript positively
+  identifies `gpt-6-astra` as the driving model. The observation latches for
+  that transcript: later model entries do not silently disable enforcement.
+- A positively identified non-Astra model, or missing/unreadable/unknown model
+  evidence, leaves Orchestra dormant. The session acts as ordinary Codex with
+  no context injection or Director denials.
 - Spawned agents are workers, never Directors. They follow their selected
   profile and the self-contained order they receive.
 - A Codex process launched by Claude-Orchestra as
@@ -32,14 +37,17 @@ quietly become the worker.
 
 | Role | Profile | Default | Purpose |
 |---|---|---|---|
-| Director | primary task | GPT-5.6 Sol / high | intake, decomposition, decisions, arbitration, user communication; never implements |
-| Scout | `scout` | GPT-5.6 Luna / medium | cheap, read-only *where/what* mapping; fan out freely |
-| Detective | `detective` | GPT-5.6 Sol / high | read-only *why/how* investigation; evidence chains and confidence grades |
-| Executor | `executor` | GPT-5.6 Terra / high | routine scoped edits, commands, builds, and tests |
-| Heavy executor | `executor-heavy` | GPT-5.6 Sol / high | hard, coupled, or escalated work chosen during planning |
-| Deep executor | `executor-heavy-xhigh` | GPT-5.6 Sol / xhigh | the hardest split-resistant work, chosen during planning |
-| Native reviewer | `reviewer` | GPT-5.6 Sol / max, fresh context | fallback review; primary review of Anthropic-authored work |
-| Claude reviewer † | project MCP transport → Claude CLI | configured by the `claude` pack | default independent review of OpenAI-authored work |
+| Director | primary task | GPT-6 Astra / adjustable | intake, decomposition, decisions, arbitration, user communication; never implements |
+| Scout | `scout` | GPT-6 Luna / medium | cheap, read-only *where/what* mapping; fan out freely |
+| Detective | `detective` | GPT-6 Sol / high | read-only *why/how* investigation; evidence chains and confidence grades |
+| Mechanical executor | `executor-mechanical` | GPT-6 Luna / xhigh | airtight mechanical changes whose meaning is settled |
+| Standard executor | `executor` | GPT-6 Sol / high | ordinary scoped edits, commands, builds, and tests; higher Sol effort is selectable |
+| Heavy executor | `executor-heavy` | GPT-6 Astra / high | hard, coupled, data-risky, or escalated work chosen during planning |
+| Principal executor | `executor-heavy-xhigh` | GPT-6 Astra / xhigh | unusually hard or split-resistant implementation |
+| Exceptional principal | `executor-principal-max` | GPT-6 Astra / max | deep planning or extreme work after multiple material hang-ups only |
+| Native reviewer | `reviewer` | GPT-6 Sol / xhigh, fresh context | fallback review; primary review of Anthropic-authored work |
+| Claude reviewer † | project MCP transport → Claude CLI | Opus 5.5 / high (xhigh selectable) | default independent review of GPT-authored work |
+| Claude visual executor † | `modeler-claude` launcher → Claude CLI | Opus 5.5 / high (xhigh selectable) | user-routable Blender/Godot visual-development partner |
 
 † Installed by the optional `claude` pack. Without it, OpenAI execution and
 fresh-context native review remain available. Route only to review transports
@@ -142,9 +150,11 @@ and confirm the tree is idle before dispatch.
 
 Review routing follows authorship:
 
-- OpenAI-authored work → the Director calls the installed project-scoped
+- GPT-authored work → the Director calls the installed project-scoped
   `mcp__orchestra_claude_review__orchestra_review` tool exactly once. The tool
-  blocks through a fresh Claude review and returns its report verbatim.
+  blocks through a fresh Opus 5.5 review and returns its report verbatim.
+  Standard review effort is `high`; select `xhigh` explicitly for unusually
+  large or complex review content.
 - Anthropic-authored work → fresh-context native `reviewer`, keeping author and
   reviewer in different model families.
 - No Claude pack → native `reviewer`; state once in REPORT that cross-family
@@ -182,6 +192,10 @@ outside explicit harness install, update, or removal work.
   the independent Claude process performs the review.
 - Hands-on skills run inside an executor or specialist order. Tell the worker
   to load the named skill and obey it within scope.
+- The optional `modeler-claude` launcher is an explicit, user-routable
+  Anthropic execution lane for Blender/Godot and related visual development.
+  It defaults to Opus 5.5/high; xhigh must be requested explicitly. Its renders,
+  exports, import logs, and asset statistics are evidence, not self-approval.
 - Mutating MCP, connector, browser, or desktop actions are execution. Read-only
   external access used to discover task facts is reconnaissance.
 - Keep produce/inspect/adjust iteration inside one order and require inspectable
@@ -208,7 +222,9 @@ outside explicit harness install, update, or removal work.
 - Codex loads this protocol from the managed block in root `AGENTS.md`; it does
   not expand Claude-style instruction imports.
 - `.codex/hooks.json` wires `SessionStart` and `PreToolUse` to
-  `.codex/hooks/orchestra-guard.js`. The user must trust project hooks.
+  `.codex/hooks/orchestra-guard.js`. The user must trust project hooks. The
+  guard reads Codex `turn_context.payload.model` transcript entries and only
+  activates on positive GPT-6 Astra evidence; unknown evidence fails open.
 - The `claude` pack installs a marked project-level MCP block in
   `.codex/config.toml`. Codex 0.153.x does not reliably propagate an MCP server
   declared only inside a custom-agent TOML, so review routing uses this

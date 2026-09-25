@@ -3,7 +3,7 @@
 #   node install.js <project> --specialists <name>
 name = "specialist-name"
 description = "Orchestra specialist executor for a named domain. Replace this with the exact tasks the specialist owns."
-model = "gpt-5.6-terra"
+model = "gpt-6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """
