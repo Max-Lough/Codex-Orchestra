@@ -97,7 +97,7 @@ if (mode === 'hang') {
 } else {
   const report = mode === 'revise'
     ? 'REVIEW ENGINE: Claude CLI (stub)\\nFINALITY: FINAL\\n\\nVERDICT: REVISE\\n\\n## FINDINGS\\n- [MAJOR] app.js:1 - value is wrong when callers import it\\n\\n## CLAIMS CHECKED\\n- author says value changed -> REFUTED (read app.js)\\n\\n## VERIFICATION\\n- node tests/value.test.js -> FAIL (expected 2 but received 1)\\n\\n## NITS\\n- none\\n'
-    : 'Claude CLI metadata: before\\nREVIEW ENGINE: Claude CLI (stub)\\nFINALITY: FINAL\\n\\nVERDICT: APPROVE\\n\\n## FINDINGS\\n- none\\n\\n## CLAIMS CHECKED\\n- author says value changed -> CONFIRMED (read app.js)\\n\\n## VERIFICATION\\n- node tests/value.test.js -> PASS (exit 0)\\n\\n## NITS\\n- none\\nClaude CLI metadata: after\\n';
+    : 'REVIEW ENGINE: Claude CLI (stub)\\nFINALITY: FINAL\\n\\n=== CLAUDE OUTPUT ===\\nVERDICT: APPROVE\\n\\n## FINDINGS\\n- none\\n\\n## CLAIMS CHECKED\\n- author says value changed -> CONFIRMED (read app.js)\\n\\n## VERIFICATION\\n- node tests/value.test.js -> PASS (exit 0)\\n\\n## NITS\\n- none\\n';
   const delay = Number(process.env.STUB_RUNNER_DELAY_MS || 0);
   setTimeout(() => process.stdout.write(report), delay);
 }
@@ -207,11 +207,11 @@ async function main() {
   const hooksDir = makeRunnerDir();
 
   section('1. Valid reports block to process close and relay byte-for-byte');
-  const expectedApprove = 'Claude CLI metadata: before\nREVIEW ENGINE: Claude CLI (stub)\nFINALITY: FINAL\n\nVERDICT: APPROVE\n\n## FINDINGS\n- none\n\n## CLAIMS CHECKED\n- author says value changed -> CONFIRMED (read app.js)\n\n## VERIFICATION\n- node tests/value.test.js -> PASS (exit 0)\n\n## NITS\n- none\nClaude CLI metadata: after\n';
+  const expectedApprove = 'REVIEW ENGINE: Claude CLI (stub)\nFINALITY: FINAL\n\n=== CLAUDE OUTPUT ===\nVERDICT: APPROVE\n\n## FINDINGS\n- none\n\n## CLAIMS CHECKED\n- author says value changed -> CONFIRMED (read app.js)\n\n## VERIFICATION\n- node tests/value.test.js -> PASS (exit 0)\n\n## NITS\n- none\n';
   const started = Date.now();
   const approve = await rpcCall({ hooksDir, env: { STUB_RUNNER_DELAY_MS: '150' } });
   check('transport waits for runner close', Date.now() - started >= 125, JSON.stringify(approve.messages));
-  check('APPROVE with metadata is relayed verbatim', textOf(approve) === expectedApprove, textOf(approve));
+  check('APPROVE with the runner envelope is relayed verbatim', textOf(approve) === expectedApprove, textOf(approve));
   check('successful tool result is not marked as an MCP error', approve.message.result.isError === false, JSON.stringify(approve.message));
   const revise = await rpcCall({ hooksDir, mode: 'revise' });
   check('REVISE is relayed unchanged', /^VERDICT: REVISE$/m.test(textOf(revise)) && /value is wrong/.test(textOf(revise)), textOf(revise));

@@ -450,15 +450,16 @@ function caseUnavailableOutcomes() {
 }
 
 function caseValidVerdictVariants() {
-  section('5. APPROVE, REVISE, and ordinary CLI metadata remain valid');
+  section('5. APPROVE, REVISE, and the runner envelope remain valid');
   const fixture = makeRepo();
   const common = reviewArgs(fixture).concat(['--retries', '0', '--no-auth-probe']);
   const approve = invoke(fixture, common, { STUB_MODE: 'approve' });
   check('APPROVE behavior is unchanged', /^VERDICT: APPROVE$/m.test(approve.stdout) && !/REVIEW_UNAVAILABLE/.test(approve.stdout), approve.stdout);
+  check('runner-owned envelope before the report remains valid', /^REVIEW ENGINE: Claude CLI/m.test(approve.stdout) && /^FINALITY: FINAL/m.test(approve.stdout) && /^=== CLAUDE OUTPUT ===$/m.test(approve.stdout), approve.stdout);
   const revise = invoke(fixture, common, { STUB_MODE: 'revise' });
   check('REVISE behavior is unchanged', /^VERDICT: REVISE$/m.test(revise.stdout) && /value is wrong/.test(revise.stdout), revise.stdout);
   const metadata = invoke(fixture, common, { STUB_MODE: 'metadata' });
-  check('ordinary Claude CLI metadata may surround one valid verdict', /^VERDICT: APPROVE$/m.test(metadata.stdout) && /session=fixture/.test(metadata.stdout) && /cost=fixture/.test(metadata.stdout), metadata.stdout);
+  check('raw arbitrary Claude metadata suffix fails closed', /^VERDICT: REVIEW_UNAVAILABLE$/m.test(metadata.stdout) && /STAGE: report_contract/.test(metadata.stdout) && /free-floating prose/.test(metadata.stdout), metadata.stdout);
 }
 
 function caseStrictReportContract() {

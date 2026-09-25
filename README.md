@@ -274,9 +274,11 @@ node tests/provider-contract.test.js
 node tests/install.test.js
 node tests/coexistence.test.js
 node tests/guard.test.js
+node tests/jobrun.test.js
 node tests/review-report-validator.test.js
 node tests/review-lane.test.js
 node tests/review-transport.test.js
+node tests/ultraplan.test.js
 node tests/review-mcp-live.test.js
 ```
 

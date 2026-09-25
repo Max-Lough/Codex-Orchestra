@@ -57,6 +57,8 @@ function reportContractFixtures() {
     ['invalid status in owned claim continuation', reviewReport('APPROVE', [approve[0], ['CLAIMS CHECKED', '- author says value changed -> CONFIRMED (read app.js)\n  another claim -> MAYBE (read old app.js)'], approve[2], approve[3]])],
     ['competing status in nested verification bullet', reviewReport('APPROVE', [approve[0], approve[1], ['VERIFICATION', '- node tests/value.test.js -> PASS (exit 0)\n  - alternate check -> FAIL (unsafe output)'], approve[3]])],
     ['invalid status in nested verification bullet', reviewReport('APPROVE', [approve[0], approve[1], ['VERIFICATION', '- node tests/value.test.js -> PASS (exit 0)\n  - alternate check -> OK (unsafe output)'], approve[3]])],
+    ['FAILED near-miss in nested verification bullet', reviewReport('APPROVE', [approve[0], approve[1], ['VERIFICATION', '- node tests/value.test.js -> PASS (exit 0)\n  - alternate check -> FAILED (timeout)'], approve[3]])],
+    ['SKIPPED near-miss in owned claim continuation', reviewReport('APPROVE', [approve[0], ['CLAIMS CHECKED', '- author says value changed -> CONFIRMED (read app.js)\n  alternate claim -> SKIPPED (dependency unavailable)'], approve[2], approve[3]])],
     ['fenced content cannot supply claim evidence', reviewReport('APPROVE', [approve[0], ['CLAIMS CHECKED', '- author says value changed -> CONFIRMED\n  ```text\n  read app.js\n  ```'], approve[2], approve[3]])],
     ['APPROVE with normalized bold refuted claim', reviewReport('APPROVE', [approve[0], ['CLAIMS CHECKED', '- author says value changed \u2192 **REFUTED** (read app.js)'], approve[2], approve[3]])],
     ['APPROVE with normalized code failed verification', reviewReport('APPROVE', [approve[0], approve[1], ['VERIFICATION', '- node tests/value.test.js \u2192 `FAIL` (expected 2 but received 1)'], approve[3]])],
@@ -66,6 +68,13 @@ function reportContractFixtures() {
     ['verification without evidence tail', reviewReport('APPROVE', [approve[0], approve[1], ['VERIFICATION', '- node tests/value.test.js -> PASS'], approve[3]])],
     ['placeholder prose', reviewReport('APPROVE', [approve[0], approve[1], approve[2], ['NITS', '- TODO']])],
     ['free-floating prose inside a section', reviewReport('APPROVE', [approve[0], ['CLAIMS CHECKED', approve[1][1] + '\nthis must be attached to a list entry'], approve[2], approve[3]])],
+    ['raw arbitrary metadata suffix', reviewReport('APPROVE', approve) + '\nClaude Code metadata: cost=fixture'],
+    ['marker-only metadata suffix', reviewReport('APPROVE', approve) + '\nClaude CLI metadata:'],
+    ['metadata prefix cannot truncate later blockers', reviewReport('APPROVE', [approve[0], approve[1], approve[2], ['NITS', '- none\nClaude CLI metadata:\n- [CRITICAL] hidden blocker remains actionable\n- hidden check -> FAIL (unsafe output observed)']])],
+    ['same-line metadata prefix cannot hide adverse tokens', reviewReport('APPROVE', [approve[0], approve[1], approve[2], ['NITS', '- none\nClaude CLI metadata: [CRITICAL] hidden blocker -> FAIL (unsafe output observed)']])],
+    ['duplicate section after metadata prefix', reviewReport('APPROVE', approve) + '\nClaude CLI metadata:\n## VERIFICATION\n- hidden check -> FAIL (unsafe output observed)'],
+    ['fenced metadata cannot truncate a later adverse entry', reviewReport('APPROVE', [approve[0], approve[1], approve[2], ['NITS', '- naming could improve\n  ```text\n  Claude CLI metadata: fenced example\n  ```\n  - hidden check -> FAIL (unsafe output observed)']])],
+    ['unclosed metadata example fence', reviewReport('APPROVE', [approve[0], ['CLAIMS CHECKED', approve[1][1] + '\n  ```text\n  Claude CLI metadata: fenced example'], approve[2], approve[3]])],
     ['APPROVE with blocking finding', reviewReport('APPROVE', [revise[0], approve[1], approve[2], approve[3]])],
     ['APPROVE with refuted claim', reviewReport('APPROVE', [approve[0], revise[1], approve[2], approve[3]])],
     ['APPROVE with failed verification', reviewReport('APPROVE', [approve[0], approve[1], revise[2], approve[3]])],
@@ -82,7 +91,7 @@ function reportContractFixtures() {
   ];
   const fencedApprove = reviewReport('APPROVE', [
     approve[0],
-    ['CLAIMS CHECKED', approve[1][1] + '\n```text\nVERDICT: REVISE\n## NITS\n- [CRITICAL] fenced example only\n```'],
+    ['CLAIMS CHECKED', approve[1][1] + '\n```text\nClaude CLI metadata: fenced example\nVERDICT: REVISE\n## NITS\n- [CRITICAL] fenced example only\n```'],
     approve[2],
     approve[3],
   ]);
@@ -147,8 +156,15 @@ function reportContractFixtures() {
     ['VERIFICATION', '- node tests/todo.test.js -> FAIL (the not applicable branch still returns unsafe)\n  - nested output retained for the check'],
     ['NITS', '- none'],
   ]);
+  const runnerEnvelopeApprove =
+    'REVIEW ENGINE: Claude CLI (requested model: opus, effort: high)\n' +
+    'FINALITY: FINAL (attempts 1/1; no later verdict will be produced by this run)\n' +
+    'PROCESS CENSUS: coverage=BEST-EFFORT\n\n' +
+    '=== CLAUDE OUTPUT ===\n' +
+    reviewReport('APPROVE', approve);
   const valid = [
       ['complete APPROVE', reviewReport('APPROVE', approve), 'APPROVE'],
+      ['runner-owned envelope before report', runnerEnvelopeApprove, 'APPROVE'],
       ['complete REVISE', reviewReport('REVISE', revise), 'REVISE'],
       ['natural status evidence and counted headings', naturalApprove, 'APPROVE'],
       ['fenced structural and blocking tokens are inert', fencedApprove, 'APPROVE'],
@@ -174,6 +190,7 @@ function reportContractFixtures() {
     invalid: byName(invalid, [
       'missing VERIFICATION',
       'mismatched claim status wrapper',
+      'metadata prefix cannot truncate later blockers',
       'competing status in nested verification bullet',
       'APPROVE with normalized bold refuted claim',
     ]),

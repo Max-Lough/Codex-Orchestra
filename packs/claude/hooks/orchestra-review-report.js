@@ -9,7 +9,7 @@
 
 const SECTION_NAMES = ['FINDINGS', 'CLAIMS CHECKED', 'VERIFICATION', 'NITS'];
 const ALL_STATUSES = ['CONFIRMED', 'REFUTED', 'UNVERIFIED', 'PASS', 'FAIL', 'NOT-RUN'];
-const STATUS_NEAR_MISSES = ['OK', 'MAYBE', 'UNKNOWN'];
+const STATUS_NEAR_MISSES = ['OK', 'MAYBE', 'UNKNOWN', 'FAILED', 'SKIPPED'];
 const COMPETING_STATUSES = ALL_STATUSES.concat(STATUS_NEAR_MISSES);
 const VERDICT_RE = /^VERDICT:\s*(APPROVE|REVISE|REVIEW_UNAVAILABLE)\s*$/;
 // Counted headings are common in real reviews. Keep the semantic heading
@@ -81,12 +81,6 @@ function listEntries(lines, fenced, start, end, label) {
   for (let index = start + 1; index < end; index += 1) {
     const line = lines[index];
     if (!line.trim()) continue;
-    // The runner may retain explicitly labelled CLI metadata outside Claude's
-    // report. It is not a section entry. Keep this narrow so ordinary prose
-    // after NITS cannot be mistaken for harmless transport decoration.
-    if (label === 'NITS' && current && !fenced[index] &&
-        /^Claude (?:Code|CLI) metadata:/i.test(line)) break;
-
     if (fenced[index]) {
       if (!current) {
         return { ok: false, error: label + ' cannot begin with a fenced block before its first list entry' };
