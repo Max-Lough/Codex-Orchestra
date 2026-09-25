@@ -108,9 +108,16 @@ does not change the current task's identity.
   parallelize disjoint work. Long orders carry numbered parts, a progress file,
   and a checkpoint budget. Have a scout compare the resulting tree with the
   executor's change claim.
-- **REVIEW** — Review at least once per campaign under §5. `APPROVE` proceeds.
-  `REVISE` returns findings verbatim to an executor, then re-reviews.
-  `REVIEW_UNAVAILABLE` is never approval.
+- **REVIEW** — Review at least once per campaign under §5, batched by default:
+  one review over the campaign's cohesive diff before the earliest ending event.
+  Review an order earlier only when later work builds on it and a defect could
+  propagate, for a risk-first probe, for heterogeneous deliverables, or on the
+  user's request. `APPROVE` proceeds. `REVISE` returns findings verbatim to
+  an executor, then re-reviews. `REVIEW_UNAVAILABLE` is never approval.
+- **FIX ORDERS** — Treat each reviewer finding as an instance of a class. The
+  reviewer identifies concrete sibling locations; every executor searches the
+  scoped class, fixes all in-scope instances, and reports CLASS SWEEP. A sweep
+  never expands scope: route out-of-scope siblings as CONCERNS.
 - **REPORT** — Lead with the outcome. Name material files, verification that
   actually ran, the review engine and verdict, unavailable lanes, and open risk.
   Never describe unreviewed work as done.
@@ -123,8 +130,9 @@ parts, and verification performed.
 
 A **campaign** is one contiguous user goal from INTAKE through final REPORT. It
 ends before a handoff, merge, release, deploy, or switch to an unrelated goal.
-Related orders may share one review only when they form one cohesive diff.
-Heterogeneous deliverables receive separate reviews.
+Related orders share one review by default when they form one cohesive diff.
+Review a foundation or risk-first probe earlier only when a defect could
+propagate to later work. Heterogeneous deliverables receive separate reviews.
 
 Commit campaign work before review when commits are authorized. Pass exact
 `base_ref` and `head_ref` so the reviewer operates in a clean, throwaway

@@ -470,27 +470,298 @@ function stripManagedPackConfig(text, label) {
   return { text: output.join('\n'), found: sawMarker };
 }
 
-function tableHeaders(text) {
-  return String(text || '').split(/\r?\n/).map((line) => line.trim())
-    .filter((line) => /^\[\[?[A-Za-z0-9_.-]+\]\]?$/.test(line));
+function skipTomlWhitespace(text, index) {
+  while (index < text.length && (text[index] === ' ' || text[index] === '\t')) index++;
+  return index;
+}
+
+function parseTomlBasicKey(text, index) {
+  let value = '';
+  for (index++; index < text.length; index++) {
+    const character = text[index];
+    if (character === '"') return { value, index: index + 1 };
+    if (character === '\\') {
+      const escape = text[++index];
+      const simple = { b: '\b', t: '\t', n: '\n', f: '\f', r: '\r', '"': '"', '\\': '\\' };
+      if (Object.prototype.hasOwnProperty.call(simple, escape)) {
+        value += simple[escape];
+        continue;
+      }
+      const digits = escape === 'u' ? 4 : escape === 'U' ? 8 : 0;
+      const hex = text.slice(index + 1, index + 1 + digits);
+      if (!digits || !new RegExp('^[0-9A-Fa-f]{' + digits + '}$').test(hex)) return null;
+      const codePoint = parseInt(hex, 16);
+      if (codePoint > 0x10FFFF || (codePoint >= 0xD800 && codePoint <= 0xDFFF)) return null;
+      value += String.fromCodePoint(codePoint);
+      index += digits;
+      continue;
+    }
+    if (character === '\r' || character === '\n') return null;
+    value += character;
+  }
+  return null;
+}
+
+function parseTomlLiteralKey(text, index) {
+  const end = text.indexOf("'", index + 1);
+  if (end === -1 || /[\r\n]/.test(text.slice(index + 1, end))) return null;
+  return { value: text.slice(index + 1, end), index: end + 1 };
+}
+
+function parseTomlKeyPath(text, index) {
+  const parts = [];
+  while (true) {
+    index = skipTomlWhitespace(text, index);
+    let parsed;
+    if (text[index] === '"') parsed = parseTomlBasicKey(text, index);
+    else if (text[index] === "'") parsed = parseTomlLiteralKey(text, index);
+    else {
+      const bare = /^[A-Za-z0-9_-]+/.exec(text.slice(index));
+      if (!bare) return null;
+      parsed = { value: bare[0], index: index + bare[0].length };
+    }
+    if (!parsed) return null;
+    parts.push(parsed.value);
+    index = skipTomlWhitespace(text, parsed.index);
+    if (text[index] !== '.') return { parts, index };
+    index++;
+  }
+}
+
+function parseTomlHeader(line) {
+  let index = skipTomlWhitespace(line, 0);
+  if (line[index] !== '[') return null;
+  const array = line[index + 1] === '[';
+  index += array ? 2 : 1;
+  const parsed = parseTomlKeyPath(line, index);
+  if (!parsed) return null;
+  index = skipTomlWhitespace(line, parsed.index);
+  const close = array ? ']]' : ']';
+  if (!line.startsWith(close, index)) return null;
+  index = skipTomlWhitespace(line, index + close.length);
+  if (index < line.length && line[index] !== '#') return null;
+  return { parts: parsed.parts, array };
+}
+
+function parseTomlAssignment(line) {
+  const parsed = parseTomlKeyPath(line, skipTomlWhitespace(line, 0));
+  if (!parsed) return null;
+  return line[skipTomlWhitespace(line, parsed.index)] === '=' ? parsed.parts : null;
+}
+
+// This deliberately recognizes only TOML's structural surface: table headers
+// and assignments. It does not interpret values, but it tracks strings,
+// comments, and collection depth so nested lines that resemble headers remain
+// inert until the enclosing value closes.
+function advanceTomlLexicalState(line, state, collectionDepth) {
+  for (let index = 0; index < line.length; index++) {
+    const character = line[index];
+    if (state === 'basic') {
+      if (character === '\\') index++;
+      else if (character === '"') state = null;
+      continue;
+    }
+    if (state === 'literal') {
+      if (character === "'") state = null;
+      continue;
+    }
+    if (state === 'multibasic') {
+      if (character === '\\') {
+        // Escaped quotes cannot begin the closing delimiter. This also skips
+        // an escaped backslash before a real delimiter later on the line.
+        index++;
+      } else if (character === '"') {
+        // TOML permits one or two content quotes immediately before a
+        // multiline closing delimiter. The delimiter is the last three quotes
+        // in a run, not the first three; otherwise a four-quote terminator
+        // leaves a phantom basic string open.
+        let end = index;
+        while (line[end] === '"') end++;
+        if (end - index < 3) {
+          index = end - 1;
+          continue;
+        }
+        state = null;
+        index = end - 1;
+      }
+      continue;
+    }
+    if (state === 'multiliteral') {
+      if (character === "'") {
+        // Multiline literal strings follow the same closing-delimiter rule.
+        let end = index;
+        while (line[end] === "'") end++;
+        if (end - index < 3) {
+          index = end - 1;
+          continue;
+        }
+        state = null;
+        index = end - 1;
+      }
+      continue;
+    }
+    if (character === '#') return state;
+    if (character === '"') {
+      if (line.startsWith('"""', index)) {
+        state = 'multibasic';
+        index += 2;
+      } else state = 'basic';
+    } else if (character === "'") {
+      if (line.startsWith("'''", index)) {
+        state = 'multiliteral';
+        index += 2;
+      } else state = 'literal';
+    } else if (character === '[') {
+      collectionDepth.square++;
+    } else if (character === ']') {
+      collectionDepth.square = Math.max(0, collectionDepth.square - 1);
+    } else if (character === '{') {
+      collectionDepth.curly++;
+    } else if (character === '}') {
+      collectionDepth.curly = Math.max(0, collectionDepth.curly - 1);
+    }
+  }
+  return state;
+}
+
+function tomlPathIsPrefix(prefix, candidate) {
+  return prefix.length <= candidate.length && prefix.every((part, index) => candidate[index] === part);
+}
+
+function formatTomlPath(parts) {
+  let substitutedSurrogate = false;
+  return '[' + parts.map((part) => {
+    if (/^[A-Za-z0-9_-]+$/.test(part)) return part;
+    // TOML basic-key escaping, not JSON escaping: JSON lone-surrogate escapes
+    // are not valid TOML unicode escapes.
+    let escaped = '';
+    for (const character of part) {
+      const codePoint = character.codePointAt(0);
+      if (character === '\\') escaped += '\\\\';
+      else if (character === '"') escaped += '\\"';
+      else if (character === '\b') escaped += '\\b';
+      else if (character === '\t') escaped += '\\t';
+      else if (character === '\n') escaped += '\\n';
+      else if (character === '\f') escaped += '\\f';
+      else if (character === '\r') escaped += '\\r';
+      else if (codePoint <= 0x1F || (codePoint >= 0x7F && codePoint <= 0x9F)) escaped += '\\u' + codePoint.toString(16).toUpperCase().padStart(4, '0');
+      else if (codePoint >= 0xD800 && codePoint <= 0xDFFF) {
+        escaped += '\\uFFFD';
+        substitutedSurrogate = true;
+      }
+      else escaped += character;
+    }
+    return '"' + escaped + '"';
+  }).join('.') + ']' + (substitutedSurrogate ? ' (invalid surrogate displayed as \\uFFFD)' : '');
+}
+
+function tomlDeclarations(text) {
+  const declarations = [];
+  let table = [];
+  let lexicalState = null;
+  const collectionDepth = { square: 0, curly: 0 };
+  const lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  for (let lineNumber = 0; lineNumber < lines.length; lineNumber++) {
+    const line = lines[lineNumber];
+    if (!lexicalState && collectionDepth.square === 0 && collectionDepth.curly === 0) {
+      const header = parseTomlHeader(line);
+      if (header) {
+        declarations.push({ line: lineNumber + 1, path: header.parts, kind: header.array ? 'array table' : 'table' });
+        table = header.parts;
+      } else {
+        const assignment = parseTomlAssignment(line);
+        if (assignment) {
+          const declared = table.concat(assignment);
+          declarations.push({ line: lineNumber + 1, path: declared, kind: 'value', scopeLength: table.length });
+        }
+      }
+    }
+    lexicalState = advanceTomlLexicalState(line, lexicalState, collectionDepth);
+  }
+  return declarations;
+}
+
+function findTomlPathCollision(existingText, ownedText) {
+  const existing = tomlDeclarations(existingText);
+  const owned = tomlDeclarations(ownedText);
+  for (const declaration of owned) {
+    for (const candidate of existing) {
+      const exact = declaration.path.length === candidate.path.length &&
+        tomlPathIsPrefix(declaration.path, candidate.path);
+      const related = tomlPathIsPrefix(declaration.path, candidate.path) ||
+        tomlPathIsPrefix(candidate.path, declaration.path);
+      if (!related) continue;
+
+      // Explicit tables may legally materialize an implicit ancestor in either
+      // source order: `[mcp_servers]` and `[mcp_servers.foo]` are compatible.
+      // Assignments below such a table are legal too. Repeating an exact path
+      // is not legal, and a value (including an inline-table/dotted-key alias)
+      // cannot be the ancestor of another declaration because values cannot be
+      // extended into tables. A table that prefixes a dotted assignment is a
+      // collision only below that assignment's explicit table scope; those
+      // deeper prefixes are implicit tables closed by the dotted key. Arrays-
+      // of-tables are conservative: descendant meaning depends on the current
+      // array element, which a separately owned pack must never inherit.
+      const bothTables = declaration.kind === 'table' && candidate.kind === 'table';
+      const shorter = declaration.path.length <= candidate.path.length ? declaration : candidate;
+      const tableDeclaration = declaration.kind === 'table' ? declaration :
+        candidate.kind === 'table' ? candidate : null;
+      const valueDeclaration = declaration.kind === 'value' ? declaration :
+        candidate.kind === 'value' ? candidate : null;
+      const implicitTableCollision = tableDeclaration && valueDeclaration &&
+        tomlPathIsPrefix(tableDeclaration.path, valueDeclaration.path) &&
+        tableDeclaration.path.length > valueDeclaration.scopeLength;
+      if (exact ||
+          (!bothTables && shorter.kind === 'value') ||
+          implicitTableCollision ||
+          declaration.kind === 'array table' || candidate.kind === 'array table') {
+        return { existing: candidate, incoming: declaration };
+      }
+    }
+  }
+  return null;
 }
 
 function withManagedPackConfig(text, context, packs, label) {
   const stripped = stripManagedPackConfig(text, label);
-  const fragments = packs.filter((name) => context.packConfigs.has(name));
+  const fragments = packs.filter((name) => context.packConfigs.has(name)).map((name) => ({
+    name,
+    text: context.packConfigs.get(name).replace(/^\s+|\s+$/g, ''),
+  }));
   if (!stripped.found && fragments.length === 0) return String(text || '');
-  let result = stripped.text.replace(/[ \t]*\n*$/, '');
-  const seenHeaders = new Set(tableHeaders(stripped.text));
-  for (const name of fragments) {
-    const fragment = context.packConfigs.get(name).replace(/^\s+|\s+$/g, '');
-    for (const header of tableHeaders(fragment)) {
-      if (seenHeaders.has(header)) {
-        fatal(label + ' already defines ' + header + ' outside the Orchestra-managed block. Refusing to create a duplicate TOML table.');
-      }
-      seenHeaders.add(header);
+  const sources = [{ name: 'existing project config', text: stripped.text }];
+  const collisions = [];
+  for (const fragment of fragments) {
+    for (const source of sources) {
+      const collision = findTomlPathCollision(source.text, fragment.text);
+      if (collision) collisions.push({ source, fragment, collision });
     }
+    sources.push({ name: 'pack ' + fragment.name, text: fragment.text });
+  }
+  if (collisions.length) {
+    const descriptions = collisions.map(({ source, fragment, collision }) =>
+      source.name + ' defines ' + formatTomlPath(collision.existing.path) +
+      ' (line ' + collision.existing.line + ', ' + collision.existing.kind +
+      '), conflicting with pack ' + fragment.name + ' ' + collision.incoming.kind +
+      ' at ' + formatTomlPath(collision.incoming.path) + ' (line ' + collision.incoming.line + ')'
+    );
+    const onlyClaudeTransport = collisions.length === 1 && fragments.length === 1 &&
+      fragments[0].name === 'claude';
+    if (onlyClaudeTransport) {
+      fatal(label + ' already defines the Orchestra Claude review transport: ' + descriptions[0] + '. Refusing to create a duplicate TOML table.');
+    }
+    if (collisions.length === 1) {
+      fatal(label + ' already defines ' + formatTomlPath(collisions[0].collision.existing.path) +
+        ': ' + descriptions[0] + '. Refusing before writing anything.');
+    }
+    fatal(label + ' has TOML declaration collisions: ' + descriptions.join('; ') + '. Refusing before writing anything.');
+  }
+
+  let result = stripped.text.replace(/[ \t]*\n*$/, '');
+  for (const fragment of fragments) {
+    const name = fragment.name;
     const markers = packConfigMarkers(name);
-    result += (result ? '\n\n' : '') + markers.begin + '\n' + fragment + '\n' + markers.end;
+    result += (result ? '\n\n' : '') + markers.begin + '\n' + fragment.text + '\n' + markers.end;
   }
   return result + '\n';
 }

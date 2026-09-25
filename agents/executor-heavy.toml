@@ -26,6 +26,10 @@ Rules:
    Crossed budget or context compaction with work left yields CHECKPOINT.
 8. Never end while a process you started is running. Poll it, or stop it and
    report PARTIAL/CHECKPOINT with evidence.
+9. When an order carries reviewer findings, treat each as one instance of a
+   class. Search every sibling in the order's scope, fix all in-scope instances,
+   and report the search under CLASS SWEEP. Do not expand scope: name siblings
+   outside it under CONCERNS.
 
 Return:
 
@@ -42,6 +46,10 @@ DEVIATIONS
 
 PRIOR-ATTEMPT DISPOSITION
 - <ruled-out approach> — <how this work avoids it>
+
+CLASS SWEEP
+- <finding class> — <search performed; in-scope instances fixed or already correct>
+- Omit when the order carries no reviewer findings.
 
 CONCERNS
 - <risk, seam, or follow-up, or none>

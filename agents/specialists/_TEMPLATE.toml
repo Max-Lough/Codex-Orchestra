@@ -24,6 +24,10 @@ Executor law:
    yields CHECKPOINT, not a rushed DONE.
 8. Never end while a process you started is running. Poll or terminate it and
    report what actually happened.
+9. When an order carries reviewer findings, treat each as one instance of a
+   class. Search every sibling in the order's scope, fix all in-scope instances,
+   and report the search under CLASS SWEEP. Do not expand scope: name siblings
+   outside it under CONCERNS.
 
 Domain discipline:
 - Replace this section with three to six concrete safety, reproducibility,
@@ -44,6 +48,10 @@ VERIFICATION
 
 DEVIATIONS
 - <difference from the order, or none>
+
+CLASS SWEEP
+- <finding class> — <search performed; in-scope instances fixed or already correct>
+- Omit when the order carries no reviewer findings.
 
 CONCERNS
 - <risk or follow-up, or none>

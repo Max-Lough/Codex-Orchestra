@@ -274,19 +274,37 @@ node tests/provider-contract.test.js
 node tests/install.test.js
 node tests/coexistence.test.js
 node tests/guard.test.js
+node tests/jobrun.test.js
+node tests/review-report-validator.test.js
 node tests/review-lane.test.js
 node tests/review-transport.test.js
+node tests/ultraplan.test.js
+node tests/review-mcp-live.test.js
 ```
 
-The opt-in end-to-end probe installs both sibling harnesses into a temporary
-Git repository and spends one real Codex call plus one real Claude call:
+The ordinary live-test command above first replays deterministic, redacted
+Codex JSONL shapes (including duplicate relay, unrelated strings, wrong typed
+arguments, duplicate/missing lifecycle events, and divergent final relay), then
+executes the safe no-opt-in skip and spends no model calls. The explicit opt-in probe installs this checkout with the
+`claude` pack into a temporary Git repository, then spends one real Codex
+invocation and one real Claude review through the installed project MCP path:
+
+```bash
+node tests/review-mcp-live.test.js --live-mcp
+```
+
+The separate coexistence probe installs both sibling harnesses and also spends
+one real Codex call plus one real Claude call:
 
 ```bash
 node tests/coexistence-live.test.js --live
 ```
 
-CI runs the same checks on supported Node versions. The active product surface
-is the root protocol, installer, profiles, skills, guard, and `packs/claude/`.
+CI runs deterministic offline checks (including the live probe's safe skip) on
+supported Node versions; it never passes either live opt-in flag and therefore
+never spends model calls. The
+active product surface is the root protocol, installer, profiles, skills,
+guard, and `packs/claude/`.
 The `plans/`, `research/`, and `roster/` trees are historical design evidence,
 not installed runtime.
 

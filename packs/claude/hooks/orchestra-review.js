@@ -15,16 +15,19 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { boundedDiagnostic, redactDiagnostic } = require('./orchestra-redact');
+const jobrun = require('./orchestra-jobrun');
+const { validateClaudeReport } = require('./orchestra-review-report');
 
 const DEFAULTS = Object.freeze({
   bin: 'claude',
   model: 'opus',
   effort: 'high',
   timeoutMs: 1800000,
-  retries: 1,
+  retries: 0,
   authProbe: true,
   probeTimeoutMs: 90000,
   worktreeRoot: os.tmpdir(),
+  killSurvivors: true,
   doNotRun: [],
   integrityIgnore: [],
 });
@@ -112,6 +115,10 @@ function firstDefined() {
   return undefined;
 }
 
+function retryValue(value) {
+  return typeof value === 'string' && !value.trim() ? undefined : value;
+}
+
 function positiveInteger(value, label, fallback, allowZero) {
   if (value === undefined) return fallback;
   const number = Number(value);
@@ -154,7 +161,11 @@ function settings(args, config) {
       'review timeout', DEFAULTS.timeoutMs, false
     ),
     retries: positiveInteger(
-      firstDefined(args.retries, envValue('ORCHESTRA_CLAUDE_REVIEW_RETRIES'), config.reviewRetries),
+      firstDefined(
+        args.retries,
+        retryValue(envValue('ORCHESTRA_CLAUDE_REVIEW_RETRIES')),
+        retryValue(config.reviewRetries)
+      ),
       'review retries', DEFAULTS.retries, true
     ),
     probeTimeoutMs: positiveInteger(
@@ -171,6 +182,14 @@ function settings(args, config) {
       firstDefined(envValue('ORCHESTRA_CLAUDE_AUTH_PROBE'), config.authProbe),
       'auth probe', DEFAULTS.authProbe
     ),
+    killSurvivors: booleanValue(
+      firstDefined(
+        envValue('ORCHESTRA_CLAUDE_REVIEW_KILL_SURVIVORS'),
+        config.reviewKillSurvivors
+      ),
+      'review survivor reaping', DEFAULTS.killSurvivors
+    ),
+    supervise: String(envValue('ORCHESTRA_JOBRUN') || '').trim().toLowerCase() !== 'off',
     doNotRun: configStringList(config.doNotRun, 'claude.doNotRun')
       .concat(stringList(envValue('ORCHESTRA_CLAUDE_DO_NOT_RUN'))),
     integrityIgnore: configStringList(config.integrityIgnore, 'claude.integrityIgnore'),
@@ -186,46 +205,144 @@ function settings(args, config) {
   return resolved;
 }
 
-function run(command, args, options) {
-  const childOptions = Object.assign({
+function engineLaunchSpec(command, args) {
+  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(command))) {
+    const words = [command].concat(args);
+    if (words.some((word) => String(word).includes('%'))) {
+      throw new Error('percent characters are not supported in Windows command-shim tokens');
+    }
+    const line = words
+      .map((word) => '"' + String(word).replace(/"/g, '""') + '"')
+      .join(' ');
+    return {
+      command: process.env.ComSpec || 'cmd.exe',
+      args: ['/d', '/s', '/c', '"' + line + '"'],
+      windowsVerbatimArguments: true,
+    };
+  }
+  return { command, args: args.slice(), windowsVerbatimArguments: false };
+}
+
+function engineSpawnOptions(options) {
+  return Object.assign({
     encoding: 'utf8',
     windowsHide: true,
     maxBuffer: 32 * 1024 * 1024,
   }, options || {});
-  // npm-distributed CLIs are commonly .cmd shims on Windows. CreateProcess
-  // cannot execute them directly, so use cmd.exe only for that explicit file
-  // kind. Reject command-string metacharacters instead of exposing a generic
-  // shell interpolation surface for config-controlled model/effort values.
-  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(command)) {
-    const words = [command].concat(args);
-    if (words.some((word) => /[\r\n%&|<>^!\u0000]/.test(String(word)))) {
-      return { error: new Error('unsafe character in Windows command-shim argument') };
-    }
-    childOptions.shell = true;
-    return spawnSync(command, args, childOptions);
-  }
-  return spawnSync(command, args, childOptions);
 }
 
+function run(command, args, options) {
+  const childOptions = engineSpawnOptions(options);
+  const spec = engineLaunchSpec(command, args);
+  if (spec.windowsVerbatimArguments) childOptions.windowsVerbatimArguments = true;
+  return spawnSync(spec.command, spec.args, childOptions);
+}
+
+function runSupervised(command, args, options, cfg) {
+  const token = crypto.randomBytes(8).toString('hex');
+  if (!cfg.supervise) {
+    return {
+      result: run(command, args, options),
+      census: jobrun.censusBlock(null, {
+        token,
+        disabled: true,
+        disabledWhy: 'ORCHESTRA_JOBRUN=off',
+      }),
+    };
+  }
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'orchestra-claude-review-jobrun-'));
+  try {
+    const spec = engineLaunchSpec(command, args);
+    const childOptions = engineSpawnOptions(options);
+    if (spec.windowsVerbatimArguments) childOptions.windowsVerbatimArguments = true;
+    const result = jobrun.superviseSync(
+      spec.command,
+      spec.args,
+      childOptions,
+      {
+        receiptFile: path.join(scratch, 'jobrun.json'),
+        deadlineMs: cfg.timeoutMs,
+        killSurvivors: cfg.killSurvivors,
+        token,
+        scratchDir: scratch,
+      }
+    );
+    return {
+      result,
+      census: jobrun.censusBlock(result.receipt, { token }),
+    };
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
 function commandFailure(result) {
+  const summary = commandFailureSummary(result);
+  return summary ? summary + commandDiagnostics(result) : '';
+}
+
+function commandFailureSummary(result) {
   if (result.error) {
-    if (result.error.code === 'ETIMEDOUT') return 'timed out' + commandDiagnostics(result);
-    return redactDiagnostic(result.error.message) + commandDiagnostics(result);
+    if (result.error.code === 'ETIMEDOUT') return 'timed out';
+    return redactDiagnostic(result.error.message);
   }
-  if (result.signal) return 'terminated by signal ' + result.signal + commandDiagnostics(result);
-  if (result.status !== 0) {
-    return 'exited with status ' + result.status + commandDiagnostics(result);
-  }
+  if (result.signal) return 'terminated by signal ' + result.signal;
+  if (result.status !== 0) return 'exited with status ' + result.status;
   return '';
 }
 
+function processFailureStage(result) {
+  if (result.error) {
+    return result.error.code === 'ETIMEDOUT' ? 'claude_timeout' : 'claude_spawn';
+  }
+  if (result.signal || result.status !== 0) return 'claude_abnormal_exit';
+  return 'claude_process';
+}
+
+function retryableProcessFailure(result) {
+  // A runner-detected timeout is the sole retryable outcome. A CLI exit or
+  // signal can represent expired authentication or rejected configuration, so
+  // retrying it would spend another inference without new evidence.
+  return Boolean(result.error && result.error.code === 'ETIMEDOUT');
+}
+
+function diagnosticPreview(value, limit = 2000, scanCap = 256 * 1024) {
+  const raw = String(value || '');
+  if (raw.length > scanCap) return '[diagnostic omitted: exceeded safe redaction scan cap]';
+  const clean = redactDiagnostic(raw).trim();
+  if (!clean || clean.length <= limit) return clean;
+  const omitted = clean.length - limit;
+  const marker = '\n... [' + omitted + ' characters omitted] ...\n';
+  const available = Math.max(2, limit - marker.length);
+  const head = Math.ceil(available / 2);
+  const tail = Math.floor(available / 2);
+  return clean.slice(0, head) + marker + clean.slice(-tail);
+}
+
 function commandDiagnostics(result) {
-  const stderr = boundedDiagnostic(result && result.stderr, 2000);
-  const stdout = boundedDiagnostic(result && result.stdout, 2000);
+  const stderr = diagnosticPreview(result && result.stderr);
+  const stdout = diagnosticPreview(result && result.stdout);
   const parts = [];
-  if (stderr) parts.push('stderr: ' + stderr);
-  if (stdout) parts.push('stdout: ' + stdout);
+  if (stderr) parts.push('stderr: ' + oneLine(stderr));
+  if (stdout) parts.push('stdout: ' + oneLine(stdout));
   return parts.length ? ': ' + parts.join(' / ') : '';
+}
+
+function commandDiagnosticBlocks(result) {
+  const blocks = [];
+  for (const [label, value] of [['stdout', result && result.stdout], ['stderr', result && result.stderr]]) {
+    const preview = diagnosticPreview(value);
+    if (preview) blocks.push({ label: 'Claude ' + label + ' preview', preview });
+  }
+  return blocks;
+}
+
+function reportValidationError(report) {
+  const parts = [String(report.error || 'Claude returned an invalid final review report')];
+  if (report.expectedGrammar) parts.push('expected grammar: ' + report.expectedGrammar);
+  if (report.offendingEntry !== undefined) {
+    parts.push('offending entry: ' + diagnosticPreview(report.offendingEntry, 1000));
+  }
+  return parts.join('; ');
 }
 
 function authSummary(value) {
@@ -434,22 +551,45 @@ AUTHOR REPORT / CLAIM
 ${options.authorReport}
 ---
 
-Return exactly this structure, with no preamble:
+Return exactly this structure, with no preamble. Use these Markdown headings
+exactly once and in this order. Every list entry must be concrete; do not use
+placeholder prose. Start each semantic entry with a top-level "- ". Indent
+wrapped prose and nested evidence beneath that entry. Fence code examples and
+indent the complete fence beneath its owning entry; tokens inside a fence are
+examples, never report structure. For predictable output, use the canonical
+CLAIMS CHECKED and VERIFICATION form \`- <subject> -> STATUS <evidence>\` with
+an unformatted uppercase status. The validator also accepts a Unicode right
+arrow and exact paired **bold**, __bold__, *italic*, _italic_, or \`code\`
+wrappers around only the status. Keep the subject, arrow, and status on the
+same top-level bullet. Evidence may follow inline or in a clearly owned,
+indented non-fenced prose continuation or evidence-only nested bullet. Do not
+move the arrow or status into a continuation or nested bullet, add a competing
+status construct, use an em dash as the arrow, or rely on fenced content as the
+only evidence. A command you could not run is still recorded as NOT-RUN with
+the specific reason. The block below is an
+APPROVE example; for REVISE, change its verdict and replace the FINDINGS "none"
+entry with a
+concrete form such as \`- [MAJOR] src/app.js:17 - stale value
+survives reload - callers see old state\`. The status examples below are exact,
+valid forms; explanatory evidence after the status is required. Explained
+UNVERIFIED claims and NOT-RUN checks record evidence limits and may accompany
+APPROVE. REFUTED claims and FAIL checks require REVISE.
 
-VERDICT: APPROVE | REVISE
+VERDICT: APPROVE
 
-FINDINGS
-- [CRITICAL|MAJOR|MINOR] path:line - defect - concrete failure scenario
-- or "none"
+## FINDINGS
+- none
 
-CLAIMS CHECKED
-- "author claim" -> CONFIRMED | REFUTED | UNVERIFIED (how checked)
+## CLAIMS CHECKED
+- author says reload is fixed -> CONFIRMED by inspection (read src/app.js:17)
 
-VERIFICATION
-- command -> actual result
+## VERIFICATION
+- npm test -> PASS (65 passed)
+- repository search for stale callers -> PASS as a search, negative as evidence (no remaining callers matched)
+- changed-file behavior audit -> PASS by inspection (read every changed line)
 
-NITS
-- non-blocking suggestions or "none"
+## NITS
+- none
 `;
 }
 
@@ -472,8 +612,11 @@ function reviewArgs(cfg) {
 
 function attemptReview(root, cfg, request) {
   let checkout;
+  let stage = 'checkout';
+  let census = '';
   try {
     checkout = checkoutForAttempt(root, cfg, request.baseRef, request.headRef);
+    stage = 'integrity_audit';
     const before = auditTree(checkout.cwd, cfg.integrityIgnore);
     const prompt = buildPrompt({
       workOrder: request.workOrder,
@@ -485,34 +628,74 @@ function attemptReview(root, cfg, request) {
       base: checkout.base,
       verification: verificationBlock(root),
     });
-    const result = run(cfg.bin, reviewArgs(cfg), {
+    stage = 'claude_process';
+    const supervised = runSupervised(cfg.bin, reviewArgs(cfg), {
       cwd: checkout.cwd,
       input: prompt,
       timeout: cfg.timeoutMs,
       env: Object.assign({}, process.env, {
         ORCHESTRA_ROLE: 'reviewer-claude-external',
       }),
-    });
+    }, cfg);
+    const result = supervised.result;
+    census = supervised.census;
+    stage = 'integrity_audit';
     const after = auditTree(checkout.cwd, cfg.integrityIgnore);
     const changed = auditDelta(before, after);
-    const failure = commandFailure(result);
-    if (failure) {
-      return { ok: false, detail: 'Claude CLI review ' + failure, changed, checkout: checkout.label };
-    }
-    const response = String(result.stdout || '').trim();
-    const verdicts = response.match(/^VERDICT:\s*(APPROVE|REVISE)\s*$/gm) || [];
-    if (verdicts.length !== 1) {
+    if (result.supervisionError) {
       return {
         ok: false,
-        detail: 'Claude returned ' + verdicts.length + ' parseable verdict lines; exactly one is required' +
-          commandDiagnostics(result),
+        stage: 'process_supervision',
+        retryable: false,
+        detail: 'Claude CLI review supervision failed: ' + result.supervisionError,
+        diagnostics: commandDiagnosticBlocks(result),
         changed,
         checkout: checkout.label,
+        census,
       };
     }
-    return { ok: true, response, changed, checkout: checkout.label };
+    const failure = commandFailureSummary(result);
+    if (failure) {
+      return {
+        ok: false,
+        stage: processFailureStage(result),
+        retryable: retryableProcessFailure(result),
+        detail: 'Claude CLI review ' + failure,
+        diagnostics: commandDiagnosticBlocks(result),
+        changed,
+        checkout: checkout.label,
+        census,
+      };
+    }
+    const response = String(result.stdout || '').trim();
+    stage = 'report_contract';
+    const report = validateClaudeReport(response);
+    if (!report.ok || report.verdict === 'REVIEW_UNAVAILABLE') {
+      return {
+        ok: false,
+        stage,
+        retryable: false,
+        detail: 'Claude returned an invalid final review report',
+        validationError: report.verdict === 'REVIEW_UNAVAILABLE'
+          ? 'REVIEW_UNAVAILABLE is not a Claude verdict'
+          : reportValidationError(report),
+        diagnostics: commandDiagnosticBlocks(result),
+        changed,
+        checkout: checkout.label,
+        census,
+      };
+    }
+    return { ok: true, response, changed, checkout: checkout.label, census };
   } catch (error) {
-    return { ok: false, detail: error.message, changed: [], checkout: checkout ? checkout.label : '' };
+    return {
+      ok: false,
+      stage,
+      retryable: false,
+      detail: error.message,
+      changed: [],
+      checkout: checkout ? checkout.label : '',
+      census,
+    };
   } finally {
     if (checkout) checkout.cleanup();
   }
@@ -538,21 +721,59 @@ function oneLine(value) {
 function safeEngineOutput(value) {
   return String(value)
     .split(/\r?\n/)
-    .map((line) => /^(REVIEW ENGINE:|FINALITY:|INTEGRITY WARNING:|=== CLAUDE OUTPUT ===)/.test(line)
+    .map((line) => /^(REVIEW ENGINE:|FINALITY:|STAGE:|INTEGRITY WARNING:|=== CLAUDE OUTPUT ===)/.test(line)
       ? '> ' + line
       : line)
     .join('\n');
 }
 
 function unavailable(detail, attempts, maximum, integrityPaths) {
+  const failures = Array.isArray(detail)
+    ? detail
+    : [detail && typeof detail === 'object' ? detail : { detail: String(detail || '') }];
+  const stages = Array.from(new Set(failures.map((failure) => failure.stage || 'unknown')));
+  const detailLines = failures.map((failure) => {
+    const prefix = failure.attempt ? 'attempt ' + failure.attempt + ': ' : '';
+    const stage = failure.stage || 'unknown';
+    return '- ' + prefix + 'stage=' + stage + '; ' + oneLine(boundedDiagnostic(failure.detail, 2000));
+  });
+  const validationLines = failures.filter((failure) => failure.validationError).map((failure) => {
+    const prefix = failure.attempt ? 'attempt ' + failure.attempt + ': ' : '';
+    // Validation errors are short, authoritative parser output. Keep them on
+    // their own line instead of burying them in a second tail truncation.
+    return '- ' + prefix + oneLine(boundedDiagnostic(failure.validationError, 2000));
+  });
+  const diagnosticBlocks = [];
+  const censusBlocks = failures
+    .filter((failure) => failure.census)
+    .map((failure) => {
+      const prefix = failure.attempt ? 'PROCESS CENSUS (attempt ' + failure.attempt + '):' : '';
+      return prefix
+        ? failure.census.replace(/^PROCESS CENSUS:/, prefix)
+        : failure.census;
+    });
+  for (const failure of failures) {
+    for (const diagnostic of failure.diagnostics || []) {
+      const prefix = failure.attempt ? 'attempt ' + failure.attempt + ' ' : '';
+      diagnosticBlocks.push(
+        prefix + diagnostic.label + ':\n' +
+        diagnostic.preview.split(/\r?\n/).map((line) => '> ' + line).join('\n')
+      );
+    }
+  }
   process.stdout.write(
     'REVIEW ENGINE: NONE - no verdict produced (attempted: Claude CLI, cross-vendor)\n' +
     finality(attempts, maximum) + '\n' +
+    'STAGE: ' + stages.join(',') + '\n' +
     (integrityPaths.length
       ? 'INTEGRITY WARNING: the review checkout changed: ' + integrityPaths.join(', ') + '\n'
       : '') +
+    (censusBlocks.length ? censusBlocks.join('\n') + '\n' : '') +
     '\nVERDICT: REVIEW_UNAVAILABLE\n\n' +
-    'DETAIL\n- ' + oneLine(boundedDiagnostic(detail, 2000)) + '\n\n' +
+    'DETAIL\n' + detailLines.join('\n') + '\n' +
+    (validationLines.length ? '\nVALIDATION ERROR\n' + validationLines.join('\n') + '\n' : '') +
+    (diagnosticBlocks.length ? '\nDIAGNOSTICS (bounded, redacted head and tail)\n' + diagnosticBlocks.join('\n') + '\n' : '') +
+    '\n' +
     'NEXT\n- Run `node .codex/hooks/orchestra-review.js --doctor`; then retry or use the native OpenAI reviewer and report that Claude did not review.\n'
   );
 }
@@ -573,15 +794,15 @@ function main() {
       process.exitCode = 1;
       return;
     }
-    return unavailable(error.message, 0, 0, []);
+    return unavailable({ stage: 'configuration', detail: error.message }, 0, 0, []);
   }
   if (args.doctor) return doctor(cfg);
   if (args.baseRef && !args.headRef) {
-    return unavailable('--base-ref requires --head-ref so the reviewed checkout is immutable', 0, cfg.retries + 1, []);
+    return unavailable({ stage: 'input', detail: '--base-ref requires --head-ref so the reviewed checkout is immutable' }, 0, 0, []);
   }
   const tier = String(args.tier || 'full').toLowerCase();
   if (!['full', 'inert'].includes(tier)) {
-    return unavailable('unsupported tier: ' + tier + ' (use full or inert)', 0, cfg.retries + 1, []);
+    return unavailable({ stage: 'input', detail: 'unsupported tier: ' + tier + ' (use full or inert)' }, 0, 0, []);
   }
   let workOrder;
   let authorReport;
@@ -589,10 +810,10 @@ function main() {
     workOrder = readRequired(args.workOrder, '--work-order');
     authorReport = readRequired(args.executorReport, '--executor-report');
   } catch (error) {
-    return unavailable(error.message, 0, cfg.retries + 1, []);
+    return unavailable({ stage: 'input', detail: error.message }, 0, 0, []);
   }
   const probe = probeClaude(cfg);
-  if (!probe.ok) return unavailable(probe.detail, 0, cfg.retries + 1, []);
+  if (!probe.ok) return unavailable({ stage: 'preflight', detail: probe.detail }, 0, 0, []);
 
   const request = {
     baseRef: args.baseRef || '',
@@ -618,17 +839,29 @@ function main() {
         (integrity.size
           ? 'INTEGRITY WARNING: the review checkout changed: ' + Array.from(integrity).sort().join(', ') + '\n'
           : '') +
+        (outcome.census ? outcome.census + '\n' : '') +
         '\n=== CLAUDE OUTPUT ===\n' + safeEngineOutput(outcome.response) + '\n'
       );
       return;
     }
-    failures.push('attempt ' + attempt + ': ' + outcome.detail);
+    failures.push({
+      attempt,
+      stage: outcome.stage,
+      detail: outcome.detail,
+      validationError: outcome.validationError,
+      diagnostics: outcome.diagnostics || [],
+      census: outcome.census || '',
+    });
+    if (!outcome.retryable) {
+      unavailable(failures, attempt, attempt, Array.from(integrity).sort());
+      return;
+    }
   }
-  unavailable(failures.join('; '), maximum, maximum, Array.from(integrity).sort());
+  unavailable(failures, maximum, maximum, Array.from(integrity).sort());
 }
 
 try {
   main();
 } catch (error) {
-  unavailable('review runner failed: ' + error.message, 0, 0, []);
+  unavailable({ stage: 'runner_internal', detail: 'review runner failed: ' + error.message }, 0, 0, []);
 }

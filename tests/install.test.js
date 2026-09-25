@@ -120,8 +120,10 @@ function makeMaster() {
     '[mcp_servers.orchestra_claude_review]\ncommand = "node"\nargs = [".codex/hooks/orchestra-review-mcp.js"]\n'
   );
   write(path.join(root, 'packs', 'claude', 'agents', 'reviewer-claude.toml'), 'name = "reviewer-claude"\nmodel = "claude-opus-4-1"\n');
+  write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-jobrun.js'), "'use strict';\n");
   write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-review.js'), "'use strict';\n");
   write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-review-mcp.js'), "'use strict';\n");
+  write(path.join(root, 'packs', 'claude', 'hooks', 'orchestra-ultraplan.js'), "'use strict';\n");
   write(path.join(root, 'packs', 'claude', 'skills', 'cross-compare-plan', 'SKILL.md'), '# Pack skill\n');
   write(path.join(root, 'packs', 'claude', 'skills', 'cross-compare-plan', 'references', 'protocol.md'), '# Protocol\n');
   write(path.join(root, 'packs', '_TEMPLATE', 'pack.json'), '{not selected}\n');
@@ -227,7 +229,7 @@ function case3DeselectRetireAndUninstall() {
   check('selected install succeeds', installed.status === 0, output(installed));
   check('selected pack installs its project-scoped MCP block', /ORCHESTRA:PACK:claude:BEGIN/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')), fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8'));
   const retiredTarget = path.join(target, '.codex', 'agents', 'reviewer-claude.toml');
-  check('pack agent, blocking transport, and nested pack skill installed', fs.existsSync(retiredTarget) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan', 'references', 'protocol.md')), census(target).join('\n'));
+  check('pack agent, supervised review/planning hooks, blocking transport, and nested pack skill installed', fs.existsSync(retiredTarget) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-jobrun.js')) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-ultraplan.js')) && fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan', 'references', 'protocol.md')), census(target).join('\n'));
   write(path.join(target, '.codex', 'agents', 'user-owned.toml'), 'name = "user-owned"\n');
 
   fs.unlinkSync(path.join(master, 'packs', 'claude', 'agents', 'reviewer-claude.toml'));
@@ -237,7 +239,7 @@ function case3DeselectRetireAndUninstall() {
 
   const deselect = run(master, [target, '--no-packs', '--no-specialists']);
   check('explicit deselection succeeds', deselect.status === 0, output(deselect));
-  check('pack hooks, skill, and specialist are removed', !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && !fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan')) && !fs.existsSync(path.join(target, '.codex', 'agents', 'modeler.toml')), census(target).join('\n'));
+  check('pack hooks, skill, and specialist are removed', !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-jobrun.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-review-mcp.js')) && !fs.existsSync(path.join(target, '.codex', 'hooks', 'orchestra-ultraplan.js')) && !fs.existsSync(path.join(target, '.agents', 'skills', 'cross-compare-plan')) && !fs.existsSync(path.join(target, '.codex', 'agents', 'modeler.toml')), census(target).join('\n'));
   check('pack deselection removes only its managed config block', !/ORCHESTRA:PACK:claude/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')) && /gpt-5\.6-sol/.test(fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8')), fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8'));
   check('unknown adjacent file survives pruning', fs.existsSync(path.join(target, '.codex', 'agents', 'user-owned.toml')), '');
 
@@ -282,6 +284,189 @@ function case4MalformedAtomicityAndCollisions() {
   const duplicateConfig = run(master, [duplicateConfigTarget, '--packs', 'claude']);
   check('foreign duplicate MCP table refuses before writes', duplicateConfig.status !== 0 && /duplicate TOML table/.test(output(duplicateConfig)), output(duplicateConfig));
   check('foreign duplicate refusal does not create a receipt', !fs.existsSync(path.join(duplicateConfigTarget, '.codex', 'orchestra-install.json')), census(duplicateConfigTarget).join('\n'));
+
+  const tomlCollisionFixtures = [
+    ['quoted table keys', '[mcp_servers."orchestra_claude_review"]\ncommand = "mine"\n'],
+    ['literal quoted table key', "[mcp_servers.'orchestra_claude_review']\ncommand = \"mine\"\n"],
+    ['escaped basic table key', '[mcp_servers."orchestra\\u005fclaude_review"]\ncommand = "mine"\n'],
+    ['quoted parent key', '["mcp_servers".orchestra_claude_review]\ncommand = "mine"\n'],
+    ['whitespace table keys', '[ mcp_servers . orchestra_claude_review ] # mine\ncommand = "mine"\n'],
+    ['array table', '[[mcp_servers.orchestra_claude_review]]\ncommand = "mine"\n'],
+    ['root dotted assignment', 'mcp_servers.orchestra_claude_review.command = "mine"\n'],
+    ['table-scoped inline value', '[mcp_servers]\norchestra_claude_review = { command = "mine" }\n'],
+  ];
+  for (const [name, config] of tomlCollisionFixtures) {
+    const target = temp('codex-orchestra-target-');
+    const configFile = path.join(target, '.codex', 'config.toml');
+    write(configFile, config);
+    write(path.join(target, 'sentinel.txt'), 'keep\n');
+    const before = census(target);
+    const result = run(master, [target, '--packs', 'claude']);
+    check(
+      'TOML collision (' + name + ') refuses before writes',
+      result.status !== 0 && /already defines the Orchestra Claude review transport/.test(output(result)),
+      output(result)
+    );
+    check(
+      'TOML collision (' + name + ') preserves config and target tree',
+      fs.readFileSync(configFile, 'utf8') === config && JSON.stringify(census(target)) === JSON.stringify(before) && !fs.existsSync(path.join(target, '.codex', 'orchestra-install.json')),
+      census(target).join('\n')
+    );
+  }
+
+  const multilineDelimiterCollisionFixtures = [
+    ['four double quotes', 'notes = """he said """"\n[mcp_servers.orchestra_claude_review]\ncommand = "mine"\n'],
+    ['five double quotes', 'notes = """he said """""\n[mcp_servers.orchestra_claude_review]\ncommand = "mine"\n'],
+    ['four single quotes', "notes = '''he said ''''\n[mcp_servers.orchestra_claude_review]\ncommand = \"mine\"\n"],
+    ['five single quotes', "notes = '''he said '''''\n[mcp_servers.orchestra_claude_review]\ncommand = \"mine\"\n"],
+  ];
+  for (const [name, config] of multilineDelimiterCollisionFixtures) {
+    const target = temp('codex-orchestra-target-');
+    const configFile = path.join(target, '.codex', 'config.toml');
+    write(configFile, config);
+    write(path.join(target, 'sentinel.txt'), 'keep\n');
+    const before = census(target);
+    const result = run(master, [target, '--packs', 'claude']);
+    check(
+      'TOML collision after legal multiline delimiter (' + name + ') refuses before writes',
+      result.status !== 0 && /already defines the Orchestra Claude review transport/.test(output(result)),
+      output(result)
+    );
+    check(
+      'multiline delimiter collision (' + name + ') preserves config and target tree',
+      fs.readFileSync(configFile, 'utf8') === config && JSON.stringify(census(target)) === JSON.stringify(before) && !fs.existsSync(path.join(target, '.codex', 'orchestra-install.json')),
+      census(target).join('\n')
+    );
+  }
+
+  const genericPackTarget = temp('codex-orchestra-target-');
+  const genericPackConfig = path.join(genericPackTarget, '.codex', 'config.toml');
+  const genericMaster = makeMaster();
+  writeJson(path.join(genericMaster, 'packs', 'synthetic', 'pack.json'), { name: 'synthetic', title: 'Synthetic config pack' });
+  write(path.join(genericMaster, 'packs', 'synthetic', 'config.toml'), '[mcp_servers.foo]\ncommand = "pack"\n');
+  const genericCollision = '[mcp_servers."foo"]\ncommand = "user"\n';
+  write(genericPackConfig, genericCollision);
+  write(path.join(genericPackTarget, 'sentinel.txt'), 'keep\n');
+  const genericBefore = census(genericPackTarget);
+  const genericRefusal = run(genericMaster, [genericPackTarget, '--packs', 'synthetic']);
+  check('generic pack duplicate table refuses before writes', genericRefusal.status !== 0 && /already defines \[mcp_servers.foo\]/.test(output(genericRefusal)), output(genericRefusal));
+  check('generic pack duplicate table keeps config byte-identical and creates no receipt', fs.readFileSync(genericPackConfig, 'utf8') === genericCollision && JSON.stringify(census(genericPackTarget)) === JSON.stringify(genericBefore) && !fs.existsSync(path.join(genericPackTarget, '.codex', 'orchestra-install.json')), census(genericPackTarget).join('\n'));
+
+  const genericControlTarget = temp('codex-orchestra-target-');
+  write(path.join(genericControlTarget, '.codex', 'config.toml'), '[mcp_servers.bar]\ncommand = "user"\n');
+  const genericControl = run(genericMaster, [genericControlTarget, '--packs', 'synthetic']);
+  check('generic pack non-conflicting sibling table installs normally', genericControl.status === 0 && fs.readFileSync(path.join(genericControlTarget, '.codex', 'config.toml'), 'utf8').includes('[mcp_servers.foo]') && fs.existsSync(path.join(genericControlTarget, '.codex', 'orchestra-install.json')), output(genericControl));
+
+  const parentTableTarget = temp('codex-orchestra-target-');
+  write(path.join(parentTableTarget, '.codex', 'config.toml'), '[mcp_servers]\nother = 1\n');
+  const parentTableInstall = run(master, [parentTableTarget, '--packs', 'claude']);
+  check(
+    'an existing explicit parent table with another value accepts the pack child table',
+    parentTableInstall.status === 0 && /\[mcp_servers\.orchestra_claude_review\]/.test(fs.readFileSync(path.join(parentTableTarget, '.codex', 'config.toml'), 'utf8')),
+    output(parentTableInstall)
+  );
+
+  const hierarchyMaster = makeMaster();
+  writeJson(path.join(hierarchyMaster, 'packs', 'alpha-child', 'pack.json'), { name: 'alpha-child', title: 'Child table pack' });
+  write(path.join(hierarchyMaster, 'packs', 'alpha-child', 'config.toml'), '[services.child]\ncommand = "child"\n');
+  writeJson(path.join(hierarchyMaster, 'packs', 'zeta-parent', 'pack.json'), { name: 'zeta-parent', title: 'Parent table pack' });
+  write(path.join(hierarchyMaster, 'packs', 'zeta-parent', 'config.toml'), '[services]\nother = 1\n');
+  const hierarchyTarget = temp('codex-orchestra-target-');
+  const hierarchyInstall = run(hierarchyMaster, [hierarchyTarget, '--packs', 'alpha-child,zeta-parent']);
+  check(
+    'a pack child table followed by an explicit parent table remains legal',
+    hierarchyInstall.status === 0 && /\[services\.child\]/.test(fs.readFileSync(path.join(hierarchyTarget, '.codex', 'config.toml'), 'utf8')) && /\[services\]/.test(fs.readFileSync(path.join(hierarchyTarget, '.codex', 'config.toml'), 'utf8')),
+    output(hierarchyInstall)
+  );
+  const childBeforeParentTarget = temp('codex-orchestra-target-');
+  write(path.join(childBeforeParentTarget, '.codex', 'config.toml'), '[services.child]\ncommand = "user"\n');
+  const childBeforeParent = run(hierarchyMaster, [childBeforeParentTarget, '--packs', 'zeta-parent']);
+  check('an existing child table followed by a pack parent table remains legal', childBeforeParent.status === 0, output(childBeforeParent));
+
+  const valuePrefixFixtures = [
+    ['root inline table', 'mcp_servers = { other = { command = "mine" } }\n'],
+    ['root scalar value', 'mcp_servers = "mine"\n'],
+    ['descendant dotted value', 'mcp_servers.orchestra_claude_review.command = "mine"\n'],
+    ['root descendant transport value', 'mcp_servers.orchestra_claude_review.transport = "mine"\n'],
+    ['table-scoped inline value', '[mcp_servers]\norchestra_claude_review = { command = "mine" }\n'],
+    ['table-scoped descendant environment value', '[mcp_servers]\norchestra_claude_review.env.TOKEN = "mine"\n'],
+  ];
+  for (const [name, config] of valuePrefixFixtures) {
+    const target = temp('codex-orchestra-target-');
+    const configFile = path.join(target, '.codex', 'config.toml');
+    write(configFile, config);
+    write(path.join(target, 'sentinel.txt'), 'keep\n');
+    const before = census(target);
+    const result = run(master, [target, '--packs', 'claude']);
+    check('value-prefix TOML collision (' + name + ') refuses atomically',
+      result.status !== 0 && JSON.stringify(census(target)) === JSON.stringify(before) &&
+        fs.readFileSync(configFile, 'utf8') === config && !fs.existsSync(path.join(target, '.codex', 'orchestra-install.json')),
+      output(result));
+  }
+
+  const collectionControlTarget = temp('codex-orchestra-target-');
+  const collectionControlConfig = 'allow = [\n  ["mcp_servers"]\n]\norchestra_claude_review.command = "mine"\n';
+  write(path.join(collectionControlTarget, '.codex', 'config.toml'), collectionControlConfig);
+  const collectionControl = run(master, [collectionControlTarget, '--packs', 'claude']);
+  check(
+    'a nested one-element array is not mistaken for a table header',
+    collectionControl.status === 0 && fs.readFileSync(path.join(collectionControlTarget, '.codex', 'config.toml'), 'utf8').startsWith(collectionControlConfig),
+    output(collectionControl)
+  );
+
+  const collectionResumptionFixtures = [
+    ['nested array closes before a real declaration', 'allow = [\n  ["mcp_servers"]\n]\n[mcp_servers.orchestra_claude_review]\ncommand = "mine"\n'],
+    ['brackets in a comment do not open a collection', '# [ {\n[mcp_servers.orchestra_claude_review]\ncommand = "mine"\n'],
+    ['brackets in a multiline string do not open a collection', 'notes = """\n[ {\n"""\n[mcp_servers.orchestra_claude_review]\ncommand = "mine"\n'],
+  ];
+  for (const [name, config] of collectionResumptionFixtures) {
+    const target = temp('codex-orchestra-target-');
+    const configFile = path.join(target, '.codex', 'config.toml');
+    write(configFile, config);
+    write(path.join(target, 'sentinel.txt'), 'keep\n');
+    const before = census(target);
+    const result = run(master, [target, '--packs', 'claude']);
+    check(
+      'TOML scanner resumes after ' + name,
+      result.status !== 0 && /already defines the Orchestra Claude review transport/.test(output(result)) &&
+        fs.readFileSync(configFile, 'utf8') === config && JSON.stringify(census(target)) === JSON.stringify(before) &&
+        !fs.existsSync(path.join(target, '.codex', 'orchestra-install.json')),
+      output(result)
+    );
+  }
+
+  const crossPackMaster = makeMaster();
+  for (const name of ['alpha', 'beta']) {
+    writeJson(path.join(crossPackMaster, 'packs', name, 'pack.json'), { name, title: name + ' pack' });
+    write(path.join(crossPackMaster, 'packs', name, 'config.toml'), '[services.shared]\n' + name + ' = true\n');
+  }
+  const crossPackTarget = temp('codex-orchestra-target-');
+  write(path.join(crossPackTarget, 'sentinel.txt'), 'keep\n');
+  const crossPackBefore = census(crossPackTarget);
+  const crossPackCollision = run(crossPackMaster, [crossPackTarget, '--packs', 'alpha,beta']);
+  check(
+    'selected packs with duplicate semantic declarations fail atomically before any target write',
+    crossPackCollision.status !== 0 && /pack alpha.+pack beta/.test(output(crossPackCollision)) && JSON.stringify(census(crossPackTarget)) === JSON.stringify(crossPackBefore),
+    output(crossPackCollision) + census(crossPackTarget).join('\n')
+  );
+
+  const tomlNonCollisionFixtures = [
+    ['comment and multiline string literals', '# [mcp_servers.orchestra_claude_review]\nnotes = """\n[mcp_servers.orchestra_claude_review]\n"""\n'],
+    ['escaped quotes inside multiline basic string', 'notes = """\n\\""" is inert string content\n[mcp_servers.orchestra_claude_review]\n"""\n'],
+    ['quoted literal dots', '["mcp_servers.orchestra_claude_review"]\ncommand = "mine"\n'],
+    ['other MCP server', '[mcp_servers.other]\ncommand = "mine"\n'],
+  ];
+  for (const [name, config] of tomlNonCollisionFixtures) {
+    const target = temp('codex-orchestra-target-');
+    write(path.join(target, '.codex', 'config.toml'), config);
+    const result = run(master, [target, '--packs', 'claude']);
+    const installed = fs.readFileSync(path.join(target, '.codex', 'config.toml'), 'utf8');
+    check(
+      'non-conflicting TOML (' + name + ') installs normally',
+      result.status === 0 && installed.includes('[mcp_servers.orchestra_claude_review]') && fs.existsSync(path.join(target, '.codex', 'orchestra-install.json')),
+      output(result) + installed
+    );
+  }
 
   const badSource = makeMaster();
   write(path.join(badSource, 'packs', 'claude', 'pack.json'), '{broken');

@@ -14,6 +14,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { boundedDiagnostic, redactDiagnostic } = require('./orchestra-redact');
+const { validateClaudeReport } = require('./orchestra-review-report');
 
 const SERVER_NAME = 'orchestra-claude-review';
 // Keep a complete successful report below the custom agent's MCP tool-output
@@ -22,7 +23,7 @@ const OUTPUT_CAP = 32 * 1024;
 const DIAGNOSTIC_CAP = 4000;
 const DEFAULT_REVIEW_TIMEOUT_MS = 1800000;
 const DEFAULT_PROBE_TIMEOUT_MS = 90000;
-const DEFAULT_RETRIES = 1;
+const DEFAULT_RETRIES = 0;
 const TASKKILL_TIMEOUT_MS = 5000;
 
 function resolveRoot() {
@@ -55,8 +56,18 @@ function positiveInteger(value) {
 }
 
 function nonNegativeInteger(value) {
+  if (value === undefined || value === null || (typeof value === 'string' && value.trim() === '')) return undefined;
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function retryArgument(value) {
+  if (typeof value !== 'number' || !Number.isInteger(value) || value < 0 || value > 1) {
+    const error = new Error('retries must be an integer 0 or 1');
+    error.code = 'INVALID_RETRIES';
+    throw error;
+  }
+  return value;
 }
 
 function projectClaudeConfig() {
@@ -71,22 +82,27 @@ function projectClaudeConfig() {
   }
 }
 
-function effectiveBackstopMs(timeoutArg) {
+function effectiveBackstopMs(timeoutArg, retriesArg) {
   const config = projectClaudeConfig();
   const timeoutMs = positiveInteger(timeoutArg) ||
     positiveInteger(process.env.ORCHESTRA_CLAUDE_REVIEW_TIMEOUT_MS) ||
     positiveInteger(config.reviewTimeoutMs) ||
     DEFAULT_REVIEW_TIMEOUT_MS;
-  let retries = nonNegativeInteger(process.env.ORCHESTRA_CLAUDE_REVIEW_RETRIES);
-  if (retries === undefined) retries = nonNegativeInteger(config.reviewRetries);
-  if (retries === undefined) retries = DEFAULT_RETRIES;
-  retries = Math.min(retries, 1);
+  const retries = effectiveRetries(retriesArg);
   const probeMs = positiveInteger(process.env.ORCHESTRA_CLAUDE_PROBE_TIMEOUT_MS) ||
     positiveInteger(config.probeTimeoutMs) ||
     DEFAULT_PROBE_TIMEOUT_MS;
   const configured = positiveInteger(process.env.ORCHESTRA_MCP_BACKSTOP_MS);
   const calculated = timeoutMs * (retries + 1) + probeMs + 300000;
   return Math.min(configured || calculated, 2147000000);
+}
+
+function effectiveRetries(retriesArg) {
+  let retries = nonNegativeInteger(retriesArg);
+  if (retries === undefined) retries = nonNegativeInteger(process.env.ORCHESTRA_CLAUDE_REVIEW_RETRIES);
+  if (retries === undefined) retries = nonNegativeInteger(projectClaudeConfig().reviewRetries);
+  if (retries === undefined) retries = DEFAULT_RETRIES;
+  return Math.min(retries, 1);
 }
 
 function send(value) {
@@ -109,30 +125,52 @@ function oneLine(value) {
   return String(value || '').replace(/[\r\n]+/g, ' / ').trim();
 }
 
-function diagnosticTail(value, cap) {
-  return boundedDiagnostic(value, cap, cap * 4);
+function diagnosticPreview(value, cap) {
+  const raw = String(value || '');
+  if (raw.length > cap * 64) return '[diagnostic omitted: exceeded safe redaction scan cap]';
+  const clean = redactDiagnostic(raw).trim();
+  if (!clean || clean.length <= cap) return clean;
+  const omitted = clean.length - cap;
+  const marker = '\n... [' + omitted + ' characters omitted] ...\n';
+  const available = Math.max(2, cap - marker.length);
+  const head = Math.ceil(available / 2);
+  const tail = Math.floor(available / 2);
+  return clean.slice(0, head) + marker + clean.slice(-tail);
 }
 
 function quotedDiagnostic(label, value) {
-  const tail = diagnosticTail(value, DIAGNOSTIC_CAP);
-  if (!tail) return '';
-  return label + '\n' + tail.split(/\r?\n/).map((line) => '> ' + line).join('\n');
+  const preview = diagnosticPreview(value, DIAGNOSTIC_CAP);
+  if (!preview) return '';
+  return label + '\n' + preview.split(/\r?\n/).map((line) => '> ' + line).join('\n');
 }
 
-function unavailableReport(reason, diagnostics) {
+function reportValidationError(report) {
+  const parts = [String(report.error || 'runner returned an invalid final review report')];
+  if (report.expectedGrammar) parts.push('expected grammar: ' + report.expectedGrammar);
+  if (report.offendingEntry !== undefined) {
+    parts.push('offending entry: ' + boundedDiagnostic(report.offendingEntry, 1000));
+  }
+  return parts.join('; ');
+}
+
+function unavailableReport(reason, diagnostics, validationError, stage) {
   const blocks = (diagnostics || []).filter(Boolean);
   return (
     'REVIEW ENGINE: NONE - no verdict produced (attempted: Claude CLI, cross-vendor)\n' +
     'FINALITY: FINAL (transport completed; no later verdict will be produced by this call)\n\n' +
+    'STAGE: ' + (stage || 'transport_unknown') + '\n\n' +
     'VERDICT: REVIEW_UNAVAILABLE\n\n' +
     'DETAIL\n- Claude review transport: ' + oneLine(boundedDiagnostic(reason, 2000)) + '\n' +
-    (blocks.length ? '\nDIAGNOSTICS (bounded and redacted)\n' + blocks.join('\n') + '\n' : '') +
+    (validationError
+      ? '\nVALIDATION ERROR\n- ' + oneLine(boundedDiagnostic(validationError, 2000)) + '\n'
+      : '') +
+    (blocks.length ? '\nDIAGNOSTICS (bounded, redacted head and tail)\n' + blocks.join('\n') + '\n' : '') +
     '\nNEXT\n- Run `node .codex/hooks/orchestra-review.js --doctor`; then retry or use the native OpenAI reviewer and report that Claude did not review.\n'
   );
 }
 
-function returnUnavailable(id, reason, diagnostics) {
-  textResult(id, unavailableReport(reason, diagnostics));
+function returnUnavailable(id, reason, diagnostics, validationError, stage) {
+  textResult(id, unavailableReport(reason, diagnostics, validationError, stage));
 }
 
 function makeRunDir() {
@@ -184,6 +222,13 @@ function buildRunnerArgs(input, dir) {
     const timeout = positiveInteger(input.timeout_ms);
     if (!timeout) throw new Error('timeout_ms must be a positive integer');
     args.push('--timeout-ms', String(timeout));
+  }
+  if (input.retries !== undefined) {
+    // JSON Schema is advisory at this boundary. Validate the runtime value too:
+    // Number(true), Number(null), and Number([]) would otherwise quietly alter
+    // retry policy before the runner is ever invoked.
+    const retries = retryArgument(input.retries);
+    args.push('--retries', String(retries));
   }
   if (input.no_tests !== undefined && typeof input.no_tests !== 'boolean') {
     throw new Error('no_tests must be a boolean');
@@ -280,7 +325,7 @@ function appendBounded(state, chunk) {
 function runReview(id, runnerArgs, progressToken, dir) {
   if (!fs.existsSync(RUNNER)) {
     removeRunDir(dir);
-    returnUnavailable(id, 'review runner is missing at ' + RUNNER);
+    returnUnavailable(id, 'review runner is missing at ' + RUNNER, [], '', 'runner_launch');
     return;
   }
 
@@ -295,7 +340,7 @@ function runReview(id, runnerArgs, progressToken, dir) {
     });
   } catch (error) {
     removeRunDir(dir);
-    returnUnavailable(id, 'runner process could not be spawned: ' + error.message);
+    returnUnavailable(id, 'runner process could not be spawned: ' + error.message, [], '', 'runner_launch');
     return;
   }
 
@@ -315,7 +360,10 @@ function runReview(id, runnerArgs, progressToken, dir) {
   child.stderr.on('data', (chunk) => appendBounded(stderr, chunk));
 
   const started = Date.now();
-  const backstopMs = effectiveBackstopMs(argValue(runnerArgs, '--timeout-ms'));
+  const backstopMs = effectiveBackstopMs(
+    argValue(runnerArgs, '--timeout-ms'),
+    argValue(runnerArgs, '--retries')
+  );
   let backstopFired = false;
   const backstopTimer = setTimeout(() => {
     backstopFired = true;
@@ -338,7 +386,7 @@ function runReview(id, runnerArgs, progressToken, dir) {
     }, progressEvery);
   }
 
-  function complete(reason, diagnostics, relay) {
+  function complete(reason, diagnostics, relay, validationError, stage) {
     if (run.answered) return;
     run.answered = true;
     clearTimeout(backstopTimer);
@@ -346,11 +394,11 @@ function runReview(id, runnerArgs, progressToken, dir) {
     IN_FLIGHT.delete(id);
     removeRunDir(dir);
     if (relay !== undefined) textResult(id, relay);
-    else returnUnavailable(id, reason, diagnostics);
+    else returnUnavailable(id, reason, diagnostics, validationError, stage);
   }
 
   child.on('error', (error) => {
-    complete('runner process failed to launch or crashed at the OS level: ' + error.message);
+    complete('runner process failed to launch or crashed at the OS level: ' + error.message, [], undefined, '', 'runner_launch');
   });
 
   child.on('close', (code, signal) => {
@@ -358,11 +406,11 @@ function runReview(id, runnerArgs, progressToken, dir) {
     const out = Buffer.concat(stdout.chunks).toString('utf8');
     const err = Buffer.concat(stderr.chunks).toString('utf8');
     const outDiagnostic = quotedDiagnostic(
-      'runner stdout tail' + (stdout.truncated ? ' (capture truncated)' : '') + ':',
+      'runner stdout preview' + (stdout.truncated ? ' (capture truncated)' : '') + ':',
       out
     );
     const errDiagnostic = quotedDiagnostic(
-      'runner stderr tail' + (stderr.truncated ? ' (capture truncated)' : '') + ':',
+      'runner stderr preview' + (stderr.truncated ? ' (capture truncated)' : '') + ':',
       err
     );
     const diagnostics = [outDiagnostic, errDiagnostic];
@@ -373,7 +421,10 @@ function runReview(id, runnerArgs, progressToken, dir) {
         'call was cancelled after ' + elapsed + 'ms' +
           (run.cancelReason ? ': ' + run.cancelReason : '') +
           '; ' + (run.killOutcome || 'the runner was signalled') + confirmation,
-        diagnostics
+        diagnostics,
+        undefined,
+        '',
+        'runner_cancelled'
       );
       return;
     }
@@ -381,30 +432,39 @@ function runReview(id, runnerArgs, progressToken, dir) {
       complete(
         'runner exceeded the transport backstop of ' + backstopMs + 'ms and was stopped; ' +
           (run.killOutcome || 'the runner was signalled'),
-        diagnostics
+        diagnostics,
+        undefined,
+        '',
+        'runner_timeout'
       );
       return;
     }
     if (code !== 0 || signal) {
       complete(
         'runner exited abnormally (code=' + code + ', signal=' + (signal || 'none') + ') after ' + elapsed + 'ms',
-        diagnostics
+        diagnostics,
+        undefined,
+        '',
+        'runner_abnormal_exit'
       );
       return;
     }
     if (stdout.truncated) {
-      complete('runner stdout exceeded the ' + OUTPUT_CAP + '-byte transport capture limit', diagnostics);
+      complete('runner stdout exceeded the ' + OUTPUT_CAP + '-byte transport capture limit', diagnostics, undefined, '', 'runner_overflow');
       return;
     }
     if (!out.trim()) {
-      complete('runner exited 0 after ' + elapsed + 'ms but wrote no report to stdout', diagnostics);
+      complete('runner exited 0 after ' + elapsed + 'ms but wrote no report to stdout', diagnostics, undefined, '', 'runner_empty_report');
       return;
     }
-    const verdicts = out.match(/^VERDICT:\s*(APPROVE|REVISE|REVIEW_UNAVAILABLE)\s*$/gm) || [];
-    if (verdicts.length !== 1) {
+    const report = validateClaudeReport(out);
+    if (!report.ok) {
       complete(
-        'runner exited 0 but produced ' + verdicts.length + ' recognized verdict lines; exactly one is required',
-        diagnostics
+        'runner exited 0 but produced an invalid final review report',
+        diagnostics,
+        undefined,
+        reportValidationError(report),
+        'runner_contract'
       );
       return;
     }
@@ -468,6 +528,12 @@ const REVIEW_TOOL = {
         minimum: 1,
         description: 'Only pass when the order explicitly sets the per-attempt timeout.',
       },
+      retries: {
+        type: 'integer',
+        minimum: 0,
+        maximum: 1,
+        description: 'Only pass when the order explicitly sets the runner retry count.',
+      },
       no_tests: {
         type: 'boolean',
         description: 'Only true when the order explicitly prohibits tests.',
@@ -510,7 +576,7 @@ function handleMessage(line) {
         result: {
           protocolVersion: params.protocolVersion || '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: SERVER_NAME, version: '3.0.2' },
+          serverInfo: { name: SERVER_NAME, version: '3.0.3' },
           instructions: 'Call orchestra_review exactly once per review. It blocks through runner completion. Relay its text exactly; never reinterpret a verdict or retry REVIEW_UNAVAILABLE.',
         },
       });
@@ -542,7 +608,19 @@ function handleMessage(line) {
         runnerArgs = buildRunnerArgs(params.arguments || {}, dir);
       } catch (error) {
         removeRunDir(dir);
-        returnUnavailable(id, 'the call could not be started: ' + error.message);
+        if (error && error.code === 'INVALID_RETRIES') {
+          send({
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: error.message,
+              data: { parameter: 'retries', expected: 'integer 0 or 1' },
+            },
+          });
+          return;
+        }
+        returnUnavailable(id, 'the call could not be started: ' + error.message, [], '', 'input');
         return;
       }
       const progressToken = params._meta && params._meta.progressToken;
@@ -553,6 +631,6 @@ function handleMessage(line) {
       send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'method not found: ' + method } });
     }
   } catch (error) {
-    if (id !== undefined) returnUnavailable(id, 'internal transport error: ' + error.message);
+    if (id !== undefined) returnUnavailable(id, 'internal transport error: ' + error.message, [], '', 'transport_internal');
   }
 }

@@ -9,6 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn } = require('child_process');
+const { reportContractFixtures, reviewReport } = require('./review-report-fixtures');
 
 const ROOT = path.resolve(__dirname, '..');
 const SERVER = process.env.ORCHESTRA_TEST_TRANSPORT ||
@@ -87,12 +88,16 @@ if (mode === 'oversize') {
   process.stdout.write('x'.repeat(40000) + '\\nVERDICT: APPROVE\\n');
   process.exit(0);
 }
+if (process.env.STUB_RUNNER_REPORT_B64) {
+  process.stdout.write(Buffer.from(process.env.STUB_RUNNER_REPORT_B64, 'base64').toString('utf8'));
+  process.exit(0);
+}
 if (mode === 'hang') {
   setInterval(() => {}, 1000);
 } else {
   const report = mode === 'revise'
-    ? 'REVIEW ENGINE: Claude CLI (stub)\\nFINALITY: FINAL\\n\\nVERDICT: REVISE\\n\\nFINDINGS\\n- issue\\n'
-    : 'Claude CLI metadata: before\\nREVIEW ENGINE: Claude CLI (stub)\\nFINALITY: FINAL\\n\\nVERDICT: APPROVE\\n\\nFINDINGS\\n- none\\nClaude CLI metadata: after\\n';
+    ? 'REVIEW ENGINE: Claude CLI (stub)\\nFINALITY: FINAL\\n\\nVERDICT: REVISE\\n\\n## FINDINGS\\n- [MAJOR] app.js:1 - value is wrong when callers import it\\n\\n## CLAIMS CHECKED\\n- author says value changed -> REFUTED (read app.js)\\n\\n## VERIFICATION\\n- node tests/value.test.js -> FAIL (expected 2 but received 1)\\n\\n## NITS\\n- none\\n'
+    : 'REVIEW ENGINE: Claude CLI (stub)\\nFINALITY: FINAL\\n\\n=== CLAUDE OUTPUT ===\\nVERDICT: APPROVE\\n\\n## FINDINGS\\n- none\\n\\n## CLAIMS CHECKED\\n- author says value changed -> CONFIRMED (read app.js)\\n\\n## VERIFICATION\\n- node tests/value.test.js -> PASS (exit 0)\\n\\n## NITS\\n- none\\n';
   const delay = Number(process.env.STUB_RUNNER_DELAY_MS || 0);
   setTimeout(() => process.stdout.write(report), delay);
 }
@@ -202,14 +207,14 @@ async function main() {
   const hooksDir = makeRunnerDir();
 
   section('1. Valid reports block to process close and relay byte-for-byte');
-  const expectedApprove = 'Claude CLI metadata: before\nREVIEW ENGINE: Claude CLI (stub)\nFINALITY: FINAL\n\nVERDICT: APPROVE\n\nFINDINGS\n- none\nClaude CLI metadata: after\n';
+  const expectedApprove = 'REVIEW ENGINE: Claude CLI (stub)\nFINALITY: FINAL\n\n=== CLAUDE OUTPUT ===\nVERDICT: APPROVE\n\n## FINDINGS\n- none\n\n## CLAIMS CHECKED\n- author says value changed -> CONFIRMED (read app.js)\n\n## VERIFICATION\n- node tests/value.test.js -> PASS (exit 0)\n\n## NITS\n- none\n';
   const started = Date.now();
   const approve = await rpcCall({ hooksDir, env: { STUB_RUNNER_DELAY_MS: '150' } });
   check('transport waits for runner close', Date.now() - started >= 125, JSON.stringify(approve.messages));
-  check('APPROVE with metadata is relayed verbatim', textOf(approve) === expectedApprove, textOf(approve));
+  check('APPROVE with the runner envelope is relayed verbatim', textOf(approve) === expectedApprove, textOf(approve));
   check('successful tool result is not marked as an MCP error', approve.message.result.isError === false, JSON.stringify(approve.message));
   const revise = await rpcCall({ hooksDir, mode: 'revise' });
-  check('REVISE is relayed unchanged', /^VERDICT: REVISE$/m.test(textOf(revise)) && /- issue/.test(textOf(revise)), textOf(revise));
+  check('REVISE is relayed unchanged', /^VERDICT: REVISE$/m.test(textOf(revise)) && /value is wrong/.test(textOf(revise)), textOf(revise));
 
   section('2. Empty, malformed, and abnormal completions fail loud');
   const empty = await rpcCall({ hooksDir, mode: 'empty' });
@@ -217,20 +222,81 @@ async function main() {
   const whitespace = await rpcCall({ hooksDir, mode: 'whitespace' });
   check('whitespace-only stdout becomes REVIEW_UNAVAILABLE', /wrote no report/.test(textOf(whitespace)) && verdictCount(textOf(whitespace)) === 1, textOf(whitespace));
   const malformed = await rpcCall({ hooksDir, mode: 'malformed' });
-  check('diagnostics without a verdict become REVIEW_UNAVAILABLE', /0 recognized verdict lines/.test(textOf(malformed)) && /ordinary diagnostics/.test(textOf(malformed)) && verdictCount(textOf(malformed)) === 1, textOf(malformed));
+  check('diagnostics without a verdict become stage-labelled REVIEW_UNAVAILABLE', /found 0/.test(textOf(malformed)) && /ordinary diagnostics/.test(textOf(malformed)) && /STAGE: runner_contract/.test(textOf(malformed)) && verdictCount(textOf(malformed)) === 1, textOf(malformed));
   check('malformed diagnostics are redacted', !/sk-visible-secret/.test(textOf(malformed)) && /OPENAI_API_KEY=\[REDACTED\]/.test(textOf(malformed)), textOf(malformed));
   const nonzero = await rpcCall({ hooksDir, mode: 'nonzero' });
   check('nonzero runner exit becomes REVIEW_UNAVAILABLE', /code=9/.test(textOf(nonzero)) && verdictCount(textOf(nonzero)) === 1, textOf(nonzero));
   check('nonzero diagnostics are bounded and redact every credential shape', !/visible-secret|dXNlcjpwYXNz|json-secret|url-secret|UPPERCASESECRET/.test(textOf(nonzero)) && /Bearer \[REDACTED\]/.test(textOf(nonzero)) && /Authorization: \[REDACTED\]/.test(textOf(nonzero)) && /ANTHROPIC_API_KEY=\[REDACTED\]/.test(textOf(nonzero)) && /postgres:\/\/\[REDACTED\]@/.test(textOf(nonzero)), textOf(nonzero));
   const hugeDiagnostic = await rpcCall({ hooksDir, mode: 'huge-diagnostic' });
-  check('oversized diagnostics are omitted without scanning or leaking the tail', /exceeded safe redaction scan cap/.test(textOf(hugeDiagnostic)) && !/tail-secret/.test(textOf(hugeDiagnostic)), textOf(hugeDiagnostic));
+  check('capture-limited diagnostics retain a redacted head/tail preview without leaking uncaptured bytes', /capture truncated/.test(textOf(hugeDiagnostic)) && /characters omitted/.test(textOf(hugeDiagnostic)) && !/tail-secret/.test(textOf(hugeDiagnostic)), textOf(hugeDiagnostic));
   const oversize = await rpcCall({ hooksDir, mode: 'oversize' });
   check('capture overflow is unavailable rather than silently truncated', /exceeded the 32768-byte transport capture limit/.test(textOf(oversize)) && verdictCount(textOf(oversize)) === 1, textOf(oversize));
   const missingDir = temp('orchestra-review-transport-missing-');
   const missing = await rpcCall({ hooksDir: missingDir });
-  check('missing runner becomes REVIEW_UNAVAILABLE', /review runner is missing/.test(textOf(missing)) && verdictCount(textOf(missing)) === 1, textOf(missing));
+  check('missing runner becomes a runner-launch REVIEW_UNAVAILABLE', /review runner is missing/.test(textOf(missing)) && /STAGE: runner_launch/.test(textOf(missing)) && verdictCount(textOf(missing)) === 1, textOf(missing));
 
-  section('3. Timeout and cancellation stop the subprocess and return a report');
+  const upstreamUnavailable = 'REVIEW ENGINE: NONE - no verdict produced (attempted: Claude CLI, cross-vendor)\nFINALITY: FINAL (attempts 1/1; no later verdict will be produced by this run)\nSTAGE: report_contract\n\nVERDICT: REVIEW_UNAVAILABLE\n\nDETAIL\n- stage=report_contract; Claude returned an invalid final review report\n\nNEXT\n- use fallback\n';
+  const relayedUnavailable = await rpcCall({ hooksDir, env: { STUB_RUNNER_REPORT_B64: Buffer.from(upstreamUnavailable, 'utf8').toString('base64') } });
+  check('runner stage labels are preserved byte-for-byte through the MCP relay', textOf(relayedUnavailable) === upstreamUnavailable && /STAGE: report_contract/.test(textOf(relayedUnavailable)), textOf(relayedUnavailable));
+
+  section('3. Shared report contract rejects malformed runner output');
+  const fixtures = reportContractFixtures();
+  for (const item of fixtures.integration.invalid) {
+    const call = await rpcCall({ hooksDir, env: { STUB_RUNNER_REPORT_B64: Buffer.from(item[1], 'utf8').toString('base64') } });
+    check(item[0] + ' becomes REVIEW_UNAVAILABLE in the transport', /^VERDICT: REVIEW_UNAVAILABLE$/m.test(textOf(call)) && !/^VERDICT: APPROVE$/m.test(textOf(call)) && !/^VERDICT: REVISE$/m.test(textOf(call)), textOf(call));
+  }
+  for (const item of fixtures.integration.valid) {
+    const call = await rpcCall({ hooksDir, env: { STUB_RUNNER_REPORT_B64: Buffer.from(item[1], 'utf8').toString('base64') } });
+    check(item[0] + ' is relayed byte-for-byte by the transport', textOf(call) === item[1], textOf(call));
+  }
+  const longInvalid = 'RAW_HEAD\n' + 'x'.repeat(12000) + '\nRAW_TAIL';
+  const diagnosed = await rpcCall({ hooksDir, env: { STUB_RUNNER_REPORT_B64: Buffer.from(longInvalid, 'utf8').toString('base64') } });
+  check(
+    'invalid long runner output preserves the exact validator error plus both bounded transcript ends',
+    /VALIDATION ERROR\n- expected exactly one verdict line; found 0/.test(textOf(diagnosed)) &&
+      /RAW_HEAD/.test(textOf(diagnosed)) && /RAW_TAIL/.test(textOf(diagnosed)) &&
+      /characters omitted/.test(textOf(diagnosed)) && textOf(diagnosed).length < 10000,
+    textOf(diagnosed)
+  );
+
+  const secretInvalid = reviewReport('APPROVE', [
+    fixtures.approve[0],
+    ['CLAIMS CHECKED', '- secret claim -> MAYBE (AUTHORIZATION=Bearer transport-super-secret)'],
+    fixtures.approve[2],
+    fixtures.approve[3],
+  ]);
+  const secretDiagnosed = await rpcCall({
+    hooksDir,
+    env: { STUB_RUNNER_REPORT_B64: Buffer.from(secretInvalid, 'utf8').toString('base64') },
+  });
+  check(
+    'transport contract error includes expected grammar and redacted offending entry',
+    /expected grammar: <claim> -> CONFIRMED|REFUTED|UNVERIFIED <concrete inline or indented evidence>/.test(textOf(secretDiagnosed)) &&
+      /offending entry: secret claim/.test(textOf(secretDiagnosed)) &&
+      /AUTHORIZATION=\[REDACTED\]/.test(textOf(secretDiagnosed)) &&
+      !/transport-super-secret/.test(textOf(secretDiagnosed)),
+    textOf(secretDiagnosed)
+  );
+  const longEntryInvalid = reviewReport('APPROVE', [
+    fixtures.approve[0],
+    ['CLAIMS CHECKED', '- ' + 'x'.repeat(12000) + ' -> MAYBE (AUTHORIZATION=Bearer bounded-super-secret)'],
+    fixtures.approve[2],
+    fixtures.approve[3],
+  ]);
+  const longEntryDiagnosed = await rpcCall({
+    hooksDir,
+    env: { STUB_RUNNER_REPORT_B64: Buffer.from(longEntryInvalid, 'utf8').toString('base64') },
+  });
+  check(
+    'transport bounds the offending entry without losing grammar or leaking its tail',
+    /expected grammar: <claim> -> CONFIRMED|REFUTED|UNVERIFIED <concrete inline or indented evidence>/.test(textOf(longEntryDiagnosed)) &&
+      /offending entry: \[truncated\]/.test(textOf(longEntryDiagnosed)) &&
+      /AUTHORIZATION=\[REDACTED\]/.test(textOf(longEntryDiagnosed)) &&
+      !/bounded-super-secret/.test(textOf(longEntryDiagnosed)) &&
+      textOf(longEntryDiagnosed).length < 10000,
+    textOf(longEntryDiagnosed)
+  );
+  section('4. Timeout and cancellation stop the subprocess and return a report');
   const timeout = await rpcCall({
     hooksDir,
     mode: 'hang',
@@ -241,7 +307,7 @@ async function main() {
   const cancelled = await rpcCall({ hooksDir, mode: 'hang', cancelAfterMs: 75, clientTimeoutMs: 10000 });
   check('interrupted call becomes REVIEW_UNAVAILABLE', /call was cancelled/.test(textOf(cancelled)) && /test interruption/.test(textOf(cancelled)) && verdictCount(textOf(cancelled)) === 1, textOf(cancelled));
 
-  section('4. Typed serialization preserves exact content and arguments');
+  section('5. Typed serialization preserves exact content and arguments');
   const project = temp('orchestra-review-transport-project-');
   const record = path.join(temp('orchestra-review-transport-record-'), 'record.json');
   const workOrder = 'Path C:\\Users\\maxtl\\Project; `backticks`; "quotes";\nline two; base 258687598fbc43095537757584e666d9859cc6fe';
@@ -257,19 +323,42 @@ async function main() {
       head_ref: '3b8e0cbb7794d8af008d1dcec560a5fae0ada593',
       tier: 'inert',
       timeout_ms: 12345,
+      retries: 0,
       no_tests: true,
       forbid: ['npm test', 'echo "quoted"'],
     },
   });
   const seen = JSON.parse(fs.readFileSync(record, 'utf8'));
   check('work order and report survive serialization exactly', seen.workOrder === workOrder && seen.executorReport === executorReport, JSON.stringify(seen));
-  check('refs and explicit controls reach the runner as argv values', seen.args.includes('258687598fbc43095537757584e666d9859cc6fe') && seen.args.includes('3b8e0cbb7794d8af008d1dcec560a5fae0ada593') && seen.args.includes('12345') && seen.args.includes('echo "quoted"'), JSON.stringify(seen.args));
+  check('refs and explicit controls reach the runner as argv values', seen.args.includes('258687598fbc43095537757584e666d9859cc6fe') && seen.args.includes('3b8e0cbb7794d8af008d1dcec560a5fae0ada593') && seen.args.includes('12345') && seen.args.includes('--retries') && seen.args[seen.args.indexOf('--retries') + 1] === '0' && seen.args.includes('echo "quoted"'), JSON.stringify(seen.args));
   check('runner receives the exact project root without shell quoting', path.resolve(seen.cwd) === path.resolve(project) && path.resolve(seen.projectDir) === path.resolve(project), JSON.stringify(seen));
   check('transport removes serialized temporary inputs after completion', !fs.existsSync(seen.args[seen.args.indexOf('--work-order') + 1]) && !fs.existsSync(seen.args[seen.args.indexOf('--executor-report') + 1]), JSON.stringify(seen.args));
   check('serialized inputs use owner-only POSIX permissions', process.platform === 'win32' || (seen.runDirMode === 0o700 && seen.workOrderMode === 0o600 && seen.executorReportMode === 0o600), JSON.stringify(seen));
   check('serialized review still relays a valid report', /^VERDICT: APPROVE$/m.test(textOf(serialized)), textOf(serialized));
+  const invalidRecord = path.join(temp('orchestra-review-transport-invalid-record-'), 'record.json');
+  for (const value of [2, true, null, [], '1']) {
+    const invalidRetries = await rpcCall({
+      hooksDir,
+      env: { STUB_RUNNER_RECORD: invalidRecord },
+      arguments: { work_order: 'work order', executor_report: 'executor report', retries: value },
+    });
+    const error = invalidRetries.message && invalidRetries.message.error;
+    check('retry control rejects invalid runtime value ' + JSON.stringify(value) + ' before spawning the runner',
+      error && error.code === -32602 && /retries must be an integer 0 or 1/.test(error.message) &&
+        error.data && error.data.parameter === 'retries' && !fs.existsSync(invalidRecord),
+      JSON.stringify(invalidRetries.message));
+  }
+  for (const [label, value] of [['empty', ''], ['whitespace-only', '   \t  ']]) {
+    const retryEnv = await rpcCall({
+      hooksDir,
+      project,
+      env: { STUB_RUNNER_RECORD: record, ORCHESTRA_CLAUDE_REVIEW_RETRIES: value },
+    });
+    const retryEnvArgs = JSON.parse(fs.readFileSync(record, 'utf8')).args;
+    check(label + ' retry environment value is treated as unset', /^VERDICT: APPROVE$/m.test(textOf(retryEnv)) && !retryEnvArgs.includes('--retries'), textOf(retryEnv));
+  }
 
-  section('5. Cancellation has no delayed process-group signal');
+  section('6. Cancellation has no delayed process-group signal');
   check('transport contains no stale delayed kill timer', !/killTimer|KILL_GRACE_MS/.test(SERVER_SOURCE), SERVER_SOURCE.match(/killTimer|KILL_GRACE_MS/));
 }
 
