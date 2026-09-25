@@ -188,6 +188,3 @@ function reportContractFixtures() {
 }
 
 module.exports = { reportContractFixtures, reviewReport };
-
-
-

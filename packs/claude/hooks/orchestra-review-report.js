@@ -351,7 +351,3 @@ function validateUnavailable(lines, fenced, verdict) {
 }
 
 module.exports = { validateClaudeReport };
-
-
-
-
