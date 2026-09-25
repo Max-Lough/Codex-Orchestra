@@ -98,10 +98,17 @@ function seedClaudeSurface(target) {
 
 function guardDecision(target, role) {
   const guard = path.join(target, '.codex', 'hooks', 'orchestra-guard.js');
+  const transcript = path.join(target, '.codex', 'coexistence-transcript.jsonl');
+  write(transcript, JSON.stringify({
+    type: 'turn_context', payload: { model: 'gpt-6-astra' },
+  }) + '\n');
   const result = spawnSync(process.execPath, [guard], {
     cwd: target,
     encoding: 'utf8',
-    input: JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'exec_command', tool_input: {} }),
+    input: JSON.stringify({
+      hook_event_name: 'PreToolUse', tool_name: 'exec_command', tool_input: {},
+      transcript_path: transcript,
+    }),
     env: Object.assign({}, process.env, { ORCHESTRA_ROLE: role || '', ORCHESTRA_PAUSE: '' }),
   });
   const text = String(result.stdout || '').trim();

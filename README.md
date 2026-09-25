@@ -1,8 +1,8 @@
 # Codex-Orchestra
 
 Codex-Orchestra is the provider-inverted mirror of Claude-Orchestra: Codex
-directs the work, OpenAI agents scout and implement it, and Claude supplies the
-default independent review of OpenAI-authored campaigns.
+directs the work, GPT agents scout and implement it, and Claude supplies the
+default independent review of GPT-authored campaigns.
 
 The operating loop is deliberately small:
 
@@ -10,23 +10,29 @@ The operating loop is deliberately small:
 INTAKE -> RECON -> PLAN -> EXECUTE -> REVIEW -> REPORT
 ```
 
-The primary Codex task is the Director. It decomposes, delegates, arbitrates,
-and communicates; custom agents do repository work. A project hook enforces
-that split, and every campaign must cross an independent review gate before it
-is reported complete.
+When GPT-6 Astra drives the primary Codex task, it is the Director: it
+decomposes, delegates, arbitrates, and communicates while custom agents do
+repository work. The project hook follows the latest primary-session model:
+Astra activates Orchestra, while a later Sol, Luna, other non-Astra, or unknown
+selection leaves the session as ordinary Codex. Every Orchestra campaign
+crosses an independent review gate before it is reported complete.
 
 ## Company
 
 | Role | Profile | Default model | Responsibility |
 |---|---|---|---|
-| Director | primary Codex task | GPT-5.6 Sol / high | intake, decisions, delegation, synthesis, user communication |
-| Scout | `scout` | GPT-5.6 Luna / medium | fast read-only file, symbol, usage, history, and web mapping |
-| Detective | `detective` | GPT-5.6 Sol / high | read-only causal investigation and invariant discovery |
-| Executor | `executor` | GPT-5.6 Terra / high | routine scoped implementation and verification |
-| Heavy executor | `executor-heavy` | GPT-5.6 Sol / high | hard or escalated implementation |
-| Deep executor | `executor-heavy-xhigh` | GPT-5.6 Sol / xhigh | the hardest split-resistant implementation |
-| Native reviewer | `reviewer` | GPT-5.6 Sol / max | fresh-context fallback; primary review of Anthropic-authored work |
-| Claude reviewer | project MCP -> Claude CLI | `claude` pack | default independent review of OpenAI-authored work |
+| Director | primary Codex task | GPT-6 Astra / adjustable | intake, decisions, delegation, synthesis, user communication |
+| Scout | `scout` | GPT-6 Luna / medium | fast read-only file, symbol, usage, history, and web mapping |
+| Detective | `detective` | GPT-6 Sol / high | read-only causal investigation and invariant discovery |
+| Mechanical executor | `executor-mechanical` | GPT-6 Luna / xhigh | airtight mechanical changes and codemods |
+| Standard executor | `executor` | GPT-6 Sol / high | ordinary scoped implementation; higher Sol effort is selectable |
+| Higher-effort standard | `executor-sol-xhigh` | GPT-6 Sol / xhigh | standard-scope work needing more reasoning without an Astra escalation |
+| Heavy executor | `executor-heavy` | GPT-6 Astra / high | hard or escalated implementation |
+| Principal executor | `executor-heavy-xhigh` | GPT-6 Astra / xhigh | unusually hard, split-resistant implementation |
+| Exceptional principal | `executor-principal-max` | GPT-6 Astra / max | deep planning or extreme work after repeated hang-ups only |
+| Native reviewer | `reviewer` | GPT-6 Sol / xhigh | fresh-context fallback; primary review of Anthropic-authored work |
+| Claude reviewer | project MCP -> Claude CLI | Opus 5.5 / high; xhigh selectable | default independent review of GPT-authored work |
+| Claude visual executor | `modeler-claude` -> Claude CLI | Opus 5.5 / high; xhigh selectable | user-routable Blender/Godot partner to Astra |
 
 The Claude reviewer is installed by the optional `claude` pack. Without it,
 the harness remains usable and routes review to the fresh native reviewer,
@@ -114,9 +120,12 @@ The per-harness pause files (`.claude/orchestra.pause` and
 |   |-- agents/
 |   |   |-- scout.toml
 |   |   |-- detective.toml
+|   |   |-- executor-mechanical.toml
 |   |   |-- executor.toml
+|   |   |-- executor-sol-xhigh.toml
 |   |   |-- executor-heavy.toml
 |   |   |-- executor-heavy-xhigh.toml
+|   |   |-- executor-principal-max.toml
 |   |   |-- reviewer.toml
 |   `-- hooks/
 |       |-- package.json              forces CommonJS beneath ESM projects
@@ -136,8 +145,11 @@ their own independent project setup if a project intentionally uses both.
 
 Review follows authorship, not a project-level opt-out switch:
 
-- OpenAI-authored work uses the project-scoped Claude review MCP transport when
-  the pack is installed.
+- GPT-authored work uses the project-scoped Claude review MCP transport when
+  the pack is installed. The standard policy is Opus 5.5/high; the executable
+  model id is the Claude CLI's stable `opus` alias. Pass the transport's typed
+  `effort` argument with value `xhigh` for particularly large or complex review
+  content.
 - Anthropic-authored work uses the fresh native `reviewer` so author and
   reviewer remain in different model families.
 - If the pack is absent, the native reviewer runs and the final report notes
@@ -199,6 +211,10 @@ defaults below. Unknown keys are ignored so project-owned extensions survive.
   "claude": {
     "reviewModel": "opus",
     "reviewEffort": "high",
+    "visualModel": "opus",
+    "visualEffort": "high",
+    "visualTimeoutMs": 1800000,
+    "visualKillSurvivors": true,
     "reviewTimeoutMs": 1800000,
     "reviewRetries": 1,
     "authProbe": true,
@@ -224,9 +240,12 @@ inert change may narrow verification, but it does not skip review.
 
 `.codex/hooks.json` registers the Director guard for `SessionStart` and
 `PreToolUse`. Codex asks the user to trust project hooks before they run. The
-guard blocks repository reads, searches, edits, and commands in the primary
-task while custom worker profiles run with hooks disabled and their own role
-instructions.
+guard reads Codex `turn_context.payload.model` transcript entries. It blocks
+repository reads, searches, edits, and commands only when the latest primary
+turn context positively identifies GPT-6 Astra. A later non-Astra model switch
+deactivates the guard. Missing, unreadable, or unknown latest evidence fails
+open so the primary task behaves as ordinary Codex. Custom worker profiles run
+with hooks disabled and their own role instructions.
 
 The Director can directly manage goal state and Markdown plans beneath
 `.codex/plans/`. Plan paths are checked for lexical containment, real-path
@@ -249,6 +268,8 @@ The `claude` pack provides:
 
 - the project-scoped blocking MCP transport plus pinned Claude review runner
   and doctor;
+- `modeler-claude`, a user-routable launcher for an Opus 5.5 visual executor
+  (`high` by default, explicit `xhigh`) with Blender/Godot evidence contracts;
 - `planner-claude` and its planning counterpart for optional cross-vendor plan
   critique.
 
@@ -278,6 +299,7 @@ node tests/jobrun.test.js
 node tests/review-report-validator.test.js
 node tests/review-lane.test.js
 node tests/review-transport.test.js
+node tests/visual-executor.test.js
 node tests/ultraplan.test.js
 node tests/review-mcp-live.test.js
 ```

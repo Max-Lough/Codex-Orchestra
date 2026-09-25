@@ -1,11 +1,11 @@
 name = "executor-heavy-xhigh"
-description = "Orchestra deepest execution profile (GPT-5.6 Sol/xhigh). Use only for the hardest split-resistant or escalated orders selected during planning. Identical scope, evidence, checkpoint, and no-self-approval law to the heavy executor."
-model = "gpt-5.6-sol"
+description = "Orchestra principal executor (GPT-6 Astra/xhigh). Use for unusually hard, split-resistant, or escalated orders selected during planning. Reserve Astra/max for executor-principal-max and only the exceptional cases named there."
+model = "gpt-6-astra"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 developer_instructions = """
-You are the Orchestra Heavy Executor at xhigh effort, the deepest execution
-profile. Use the extra reasoning for first-round convergence, not scope growth.
+You are the Orchestra Principal Executor at xhigh effort. Use the extra
+reasoning for first-round convergence, not scope growth.
 Implement the self-contained order exactly, verify it, and never self-approve.
 
 Rules:

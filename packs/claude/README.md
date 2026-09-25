@@ -2,8 +2,8 @@
 
 This optional pack supplies the opposite-family judgment lane when Codex is in
 the Director's chair. OpenAI agents still direct, scout, investigate, and
-execute. When the pack is installed, an OpenAI-authored campaign goes through
-the project-scoped Claude review MCP transport by default; Claude-authored work
+execute. When the pack is installed, a GPT-authored campaign goes through
+the project-scoped Opus 5.5 review MCP transport by default; Anthropic-authored work
 goes to the fresh-context native OpenAI reviewer so author and reviewer remain
 on different providers.
 
@@ -13,7 +13,23 @@ node .codex/hooks/orchestra-review.js --doctor
 ```
 
 The pack also retains `planner-claude`, the optional read-only Anthropic
-counterpart for a cross-family planning round.
+counterpart for a cross-family planning round, and installs `modeler-claude`,
+an explicit user-routable Opus 5.5 visual-development executor launcher.
+
+## Visual executor invocation
+
+Route a self-contained Blender/Godot or related visual-development order to
+the `modeler-claude` profile when the user wants an Anthropic partner to Astra.
+The launcher calls this runner exactly once and relays its report verbatim:
+
+```bash
+node .codex/hooks/orchestra-visual.js --work-order .codex/plans/visual-order.md
+```
+
+The stable executable model alias is `opus`; harness policy identifies that
+alias as Opus 5.5. Effort defaults to `high`. Add `--effort xhigh` only for an
+explicitly large or complex visual order. The executor must return inspectable
+renders/exports/logs and mesh, material, texture, collider, and LOD evidence.
 
 ## Review invocation
 
@@ -23,7 +39,8 @@ exception does not make the Director the reviewer: the tool starts a fresh,
 independent Claude CLI process. The tool accepts the
 work order, executor report, refs, and explicit controls as typed arguments,
 writes its own temporary input files, and blocks until the runner process has
-closed. It then relays the runner's stdout verbatim.
+closed. Review effort defaults to `high`; pass `effort` with value `xhigh` for
+unusually large or complex content. It then relays the runner's stdout verbatim.
 
 ## Final review report contract
 
@@ -115,8 +132,9 @@ line, while raw stdout/stderr are independently represented by one bounded,
 redacted head-and-tail preview so both the beginning and failure suffix survive.
 A valid runner
 report is returned byte-for-byte; the Director must not append its own text.
-Its `retries` argument is strictly a JSON integer `0` or `1`; invalid runtime
-types or values return an MCP invalid-parameters error before the runner starts.
+Its `effort` argument is strictly `high` or `xhigh`, and `retries` is strictly a
+JSON integer `0` or `1`; invalid runtime types or values return an MCP
+invalid-parameters error before the runner starts.
 
 ## Configuration
 
@@ -134,6 +152,10 @@ Durable settings live under `claude` in `.codex/orchestra.json`:
     "bin": "claude",
     "reviewModel": "opus",
     "reviewEffort": "high",
+    "visualModel": "opus",
+    "visualEffort": "high",
+    "visualTimeoutMs": 1800000,
+    "visualKillSurvivors": true,
     "reviewTimeoutMs": 1800000,
     "reviewRetries": 0,
     "reviewKillSurvivors": true,
@@ -154,7 +176,11 @@ default.
 |---|---|---|
 | `bin` | `CLAUDE_BIN` | `claude` |
 | `reviewModel` | `ORCHESTRA_CLAUDE_REVIEW_MODEL` | `opus` |
-| `reviewEffort` | `ORCHESTRA_CLAUDE_REVIEW_EFFORT` | `high` |
+| `reviewEffort` | `ORCHESTRA_CLAUDE_REVIEW_EFFORT` | `high` (`xhigh` selectable per MCP call) |
+| `visualModel` | `ORCHESTRA_CLAUDE_VISUAL_MODEL` | `opus` |
+| `visualEffort` | `ORCHESTRA_CLAUDE_VISUAL_EFFORT` | `high` (`xhigh` selectable) |
+| `visualTimeoutMs` | `ORCHESTRA_CLAUDE_VISUAL_TIMEOUT_MS` | `1800000` |
+| `visualKillSurvivors` | `ORCHESTRA_CLAUDE_VISUAL_KILL_SURVIVORS` | `true` |
 | `reviewTimeoutMs` | `ORCHESTRA_CLAUDE_REVIEW_TIMEOUT_MS` | `1800000` |
 | `reviewRetries` | `ORCHESTRA_CLAUDE_REVIEW_RETRIES` | `0` |
 | `reviewKillSurvivors` | `ORCHESTRA_CLAUDE_REVIEW_KILL_SURVIVORS` | `true` |
@@ -189,7 +215,7 @@ sets `ORCHESTRA_ROLE=planner-claude-external`, and exposes no repository tools.
 
 ## Process supervision
 
-The real Claude review and planning invocations run under the shared
+The real Claude review, planning, and visual-execution invocations run under the shared
 process-tree supervisor. Each attempted run reports a process census before
 the Claude output or unavailable verdict. Missing or incomplete supervisor
 receipts fail closed. Attributed descendants that outlive Claude are reaped by
@@ -198,7 +224,9 @@ default.
 For review, set `ORCHESTRA_CLAUDE_REVIEW_KILL_SURVIVORS=0` or
 `claude.reviewKillSurvivors=false` only for diagnosis. Planning uses
 `ORCHESTRA_CLAUDE_PLAN_KILL_SURVIVORS` with a default of `true`.
-`ORCHESTRA_JOBRUN=off` disables supervision for both lanes and is stated
+The visual executor uses `ORCHESTRA_CLAUDE_VISUAL_KILL_SURVIVORS` and also
+defaults to `true`; keep it enabled for write-capable work. `ORCHESTRA_JOBRUN=off`
+disables supervision for all three lanes and is stated
 loudly in their output.
 
 Every receipt and process-census block labels overall descendant coverage

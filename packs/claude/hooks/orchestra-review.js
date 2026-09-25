@@ -16,11 +16,12 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 const { boundedDiagnostic, redactDiagnostic } = require('./orchestra-redact');
 const jobrun = require('./orchestra-jobrun');
+const engineLaunch = require('./orchestra-engine-launch');
 const { validateClaudeReport } = require('./orchestra-review-report');
 
 const DEFAULTS = Object.freeze({
   bin: 'claude',
-  model: 'opus',
+  model: 'opus', // Stable Claude CLI alias; harness policy is Opus 5.5.
   effort: 'high',
   timeoutMs: 1800000,
   retries: 0,
@@ -31,6 +32,8 @@ const DEFAULTS = Object.freeze({
   doNotRun: [],
   integrityIgnore: [],
 });
+const CLAUDE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/\-\[\]]*$/;
+const CLAUDE_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
 
 function dieUsage(message) {
   process.stderr.write('ERROR: ' + message + '\n');
@@ -197,38 +200,26 @@ function settings(args, config) {
   if (args.noAuthProbe) resolved.authProbe = false;
   resolved.bin = resolved.bin.trim();
   resolved.model = resolved.model.trim();
-  resolved.effort = resolved.effort.trim();
+  resolved.effort = resolved.effort.trim().toLowerCase();
   if (!resolved.bin || !resolved.model || !resolved.effort) {
     throw new Error('Claude binary, review model, and review effort must not be empty');
+  }
+  if (!CLAUDE_MODEL.test(resolved.model)) {
+    throw new Error('review model contains unsupported characters');
+  }
+  if (!CLAUDE_EFFORTS.has(resolved.effort)) {
+    throw new Error('review effort must be low, medium, high, xhigh, or max');
   }
   if (resolved.retries > 1) throw new Error('review retries may not exceed 1');
   return resolved;
 }
 
 function engineLaunchSpec(command, args) {
-  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(command))) {
-    const words = [command].concat(args);
-    if (words.some((word) => String(word).includes('%'))) {
-      throw new Error('percent characters are not supported in Windows command-shim tokens');
-    }
-    const line = words
-      .map((word) => '"' + String(word).replace(/"/g, '""') + '"')
-      .join(' ');
-    return {
-      command: process.env.ComSpec || 'cmd.exe',
-      args: ['/d', '/s', '/c', '"' + line + '"'],
-      windowsVerbatimArguments: true,
-    };
-  }
-  return { command, args: args.slice(), windowsVerbatimArguments: false };
+  return engineLaunch.engineLaunchSpec(command, args);
 }
 
 function engineSpawnOptions(options) {
-  return Object.assign({
-    encoding: 'utf8',
-    windowsHide: true,
-    maxBuffer: 32 * 1024 * 1024,
-  }, options || {});
+  return engineLaunch.engineSpawnOptions(options);
 }
 
 function run(command, args, options) {
@@ -519,7 +510,7 @@ function buildPrompt(options) {
     : 'LIVE SCOPE\nReview the current working tree exactly as it exists now.\n';
   return `You are the independent Anthropic Reviewer in the Orchestra harness.
 The author and Director are OpenAI Codex agents. This is the mandatory
-cross-family review of an OpenAI-authored campaign. Presume the change is
+cross-family review of a GPT-authored campaign. Presume the change is
 broken until you fail to break it. Work only in the current repository.
 
 ${scope}
@@ -832,7 +823,7 @@ function main() {
     for (const item of outcome.changed || []) integrity.add(item);
     if (outcome.ok) {
       process.stdout.write(
-        'REVIEW ENGINE: Claude CLI (requested model: ' + cfg.model + ', effort: ' + cfg.effort +
+        'REVIEW ENGINE: Claude CLI (requested model: ' + cfg.model + ', policy: Opus 5.5, effort: ' + cfg.effort +
           ', timeout: ' + cfg.timeoutMs + 'ms, fresh context, tier: ' + tier +
           ', checkout: ' + outcome.checkout + ')\n' +
         finality(attempt, maximum) + '\n' +

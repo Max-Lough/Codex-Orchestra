@@ -70,6 +70,15 @@ function retryArgument(value) {
   return value;
 }
 
+function reviewEffortArgument(value) {
+  if (typeof value !== 'string' || !['high', 'xhigh'].includes(value)) {
+    const error = new Error('effort must be high or xhigh');
+    error.code = 'INVALID_EFFORT';
+    throw error;
+  }
+  return value;
+}
+
 function projectClaudeConfig() {
   try {
     const parsed = JSON.parse(fs.readFileSync(path.join(ROOT, '.codex', 'orchestra.json'), 'utf8'));
@@ -214,6 +223,9 @@ function buildRunnerArgs(input, dir) {
   ];
   optionalString(input, 'base_ref', args, '--base-ref');
   optionalString(input, 'head_ref', args, '--head-ref');
+  if (input.effort !== undefined) {
+    args.push('--effort', reviewEffortArgument(input.effort));
+  }
   if (input.tier !== undefined) {
     if (!['full', 'inert'].includes(input.tier)) throw new Error('tier must be full or inert');
     args.push('--tier', input.tier);
@@ -523,6 +535,11 @@ const REVIEW_TOOL = {
         enum: ['full', 'inert'],
         description: 'Only pass when the order explicitly selects a tier.',
       },
+      effort: {
+        type: 'string',
+        enum: ['high', 'xhigh'],
+        description: 'Review reasoning effort. Omit for the standard high default; use xhigh for unusually large or complex review content.',
+      },
       timeout_ms: {
         type: 'integer',
         minimum: 1,
@@ -576,7 +593,7 @@ function handleMessage(line) {
         result: {
           protocolVersion: params.protocolVersion || '2024-11-05',
           capabilities: { tools: {} },
-          serverInfo: { name: SERVER_NAME, version: '3.0.3' },
+          serverInfo: { name: SERVER_NAME, version: '3.1.0' },
           instructions: 'Call orchestra_review exactly once per review. It blocks through runner completion. Relay its text exactly; never reinterpret a verdict or retry REVIEW_UNAVAILABLE.',
         },
       });
@@ -616,6 +633,18 @@ function handleMessage(line) {
               code: -32602,
               message: error.message,
               data: { parameter: 'retries', expected: 'integer 0 or 1' },
+            },
+          });
+          return;
+        }
+        if (error && error.code === 'INVALID_EFFORT') {
+          send({
+            jsonrpc: '2.0',
+            id,
+            error: {
+              code: -32602,
+              message: error.message,
+              data: { parameter: 'effort', expected: 'high or xhigh' },
             },
           });
           return;

@@ -12,7 +12,7 @@ node install.js /path/to/project --packs claude
 
 | Pack | What it adds | Dependency |
 |---|---|---|
-| `claude` | Default cross-family review of OpenAI-authored campaigns and an optional Anthropic planning counterpart | Authenticated Claude CLI or `ANTHROPIC_API_KEY` |
+| `claude` | Default cross-family review of GPT-authored campaigns, an optional Anthropic planning counterpart, and an Opus visual executor | Authenticated Claude CLI or `ANTHROPIC_API_KEY` |
 
 Without the pack, campaigns use the fresh-context native OpenAI reviewer and
 must be reported as lacking cross-family review. If the pack is installed but

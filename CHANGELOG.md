@@ -1,5 +1,24 @@
 # Changelog
 
+## 3.1.0 — 2026-09-25
+
+- Activate Director enforcement only while the latest primary-session model is
+  GPT-6 Astra. Later Sol, Luna, other-model, and unknown turn contexts return
+  the session to ordinary Codex behavior; reverse transcript scanning keeps the
+  decision exact for large JSONL histories.
+- Refresh the execution ladder around GPT-6 Luna/xhigh mechanical work,
+  GPT-6 Sol/high standard work with higher-effort Sol options, and GPT-6
+  Astra/high through max for heavy, principal, and exceptional escalations.
+- Prefer fresh Opus 5.5/high review for GPT-authored work, expose a typed
+  per-call `xhigh` review control through the required project MCP transport,
+  and retain an explicit Opus visual-development executor for Blender/Godot
+  collaboration.
+- Harden all shared Windows Claude `.cmd` launches so trailing backslashes and
+  quoted shell metacharacters preserve argv boundaries. Review, planning, and
+  visual lanes now validate model/effort inputs; the visual and planning CLIs
+  reject unknown or equals-form flags and invalid timeouts instead of silently
+  falling back.
+
 ## 3.0.3 — 2026-09-04
 
 - Refuse installer-managed Claude MCP collisions by semantic TOML key path,

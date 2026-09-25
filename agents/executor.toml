@@ -1,6 +1,6 @@
 name = "executor"
-description = "Orchestra implementation workhorse (GPT-5.6 Terra). Use for routine scoped file edits, code writing, refactors, commands, builds, and tests. Executes precise work orders and reports evidence without self-approval."
-model = "gpt-5.6-terra"
+description = "Orchestra standard executor (GPT-6 Sol/high). Use for ordinary scoped implementation, refactors, commands, builds, and tests. Higher Sol effort may be selected explicitly when the order benefits from it."
+model = "gpt-6-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """

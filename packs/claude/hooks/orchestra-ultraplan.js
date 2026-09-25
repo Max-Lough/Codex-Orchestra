@@ -12,10 +12,30 @@ const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const jobrun = require('./orchestra-jobrun');
+const engineLaunch = require('./orchestra-engine-launch');
 
-function value(name) {
-  const index = process.argv.indexOf(name);
-  return index >= 0 && index + 1 < process.argv.length ? process.argv[index + 1] : '';
+const CLAUDE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/\-\[\]]*$/;
+const CLAUDE_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+
+function parseArgs(argv) {
+  const allowed = new Set(['--plan', '--brief', '--round', '--model', '--effort']);
+  const result = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (!allowed.has(flag)) throw new Error('unknown option: ' + flag);
+    if (index + 1 >= argv.length || String(argv[index + 1]).startsWith('--')) {
+      throw new Error(flag + ' requires a value');
+    }
+    result[flag.slice(2)] = argv[++index];
+  }
+  return result;
+}
+
+function positiveInteger(value, label, fallback) {
+  if (value === undefined || value === '') return fallback;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number <= 0) throw new Error(label + ' must be a positive integer');
+  return number;
 }
 
 function read(file, label) {
@@ -33,21 +53,7 @@ function unavailable(detail, census) {
 }
 
 function engineLaunchSpec(command, args) {
-  if (process.platform === 'win32' && /\.(cmd|bat)$/i.test(String(command))) {
-    const words = [command].concat(args);
-    if (words.some((word) => String(word).includes('%'))) {
-      throw new Error('percent characters are not supported in Windows command-shim tokens');
-    }
-    const line = words
-      .map((word) => '"' + String(word).replace(/"/g, '""') + '"')
-      .join(' ');
-    return {
-      command: process.env.ComSpec || 'cmd.exe',
-      args: ['/d', '/s', '/c', '"' + line + '"'],
-      windowsVerbatimArguments: true,
-    };
-  }
-  return { command, args: args.slice(), windowsVerbatimArguments: false };
+  return engineLaunch.engineLaunchSpec(command, args);
 }
 
 function booleanValue(value, fallback) {
@@ -59,11 +65,7 @@ function booleanValue(value, fallback) {
 }
 
 function engineSpawnOptions(options) {
-  return Object.assign({
-    encoding: 'utf8',
-    windowsHide: true,
-    maxBuffer: 32 * 1024 * 1024,
-  }, options || {});
+  return engineLaunch.engineSpawnOptions(options);
 }
 
 function commandSupervised(command, args, options, timeout, killSurvivors) {
@@ -147,22 +149,38 @@ UPDATED PLAN
 }
 
 function main() {
+  let args;
   let plan;
   let brief;
+  let round;
+  let model;
+  let effort;
+  let deadlineMs;
+  let binary;
+  let killSurvivors;
   try {
-    plan = read(value('--plan'), '--plan');
-    brief = read(value('--brief'), '--brief');
+    args = parseArgs(process.argv.slice(2));
+    plan = read(args.plan, '--plan');
+    brief = read(args.brief, '--brief');
+    round = Number(args.round || 1);
+    if (!Number.isInteger(round) || round < 1) throw new Error('invalid --round value');
+    model = String(args.model || process.env.ORCHESTRA_CLAUDE_PLAN_MODEL || 'fable').trim();
+    effort = String(args.effort || process.env.ORCHESTRA_CLAUDE_PLAN_EFFORT || 'max').trim().toLowerCase();
+    if (!CLAUDE_MODEL.test(model)) throw new Error('planning model contains unsupported characters');
+    if (!CLAUDE_EFFORTS.has(effort)) {
+      throw new Error('planning effort must be low, medium, high, xhigh, or max');
+    }
+    deadlineMs = positiveInteger(
+      process.env.ORCHESTRA_CLAUDE_PLAN_TIMEOUT_MS,
+      'ORCHESTRA_CLAUDE_PLAN_TIMEOUT_MS',
+      900000
+    );
+    binary = String(process.env.CLAUDE_BIN || 'claude').trim();
+    if (!binary) throw new Error('Claude binary must not be empty');
+    killSurvivors = booleanValue(process.env.ORCHESTRA_CLAUDE_PLAN_KILL_SURVIVORS, true);
   } catch (error) {
     return unavailable(error.message);
   }
-  const round = Number(value('--round') || 1);
-  if (!Number.isInteger(round) || round < 1) return unavailable('invalid --round value');
-  const model = (value('--model') || process.env.ORCHESTRA_CLAUDE_PLAN_MODEL || 'fable').trim();
-  const effort = (value('--effort') || process.env.ORCHESTRA_CLAUDE_PLAN_EFFORT || 'max').trim();
-  const timeout = Number(process.env.ORCHESTRA_CLAUDE_PLAN_TIMEOUT_MS || 900000);
-  const binary = (process.env.CLAUDE_BIN || 'claude').trim();
-  const deadlineMs = Number.isInteger(timeout) && timeout > 0 ? timeout : 900000;
-  const killSurvivors = booleanValue(process.env.ORCHESTRA_CLAUDE_PLAN_KILL_SURVIVORS, true);
   const supervised = commandSupervised(binary, [
     '--print', '--restricted', '--safe-mode', '--no-session-persistence',
     '--output-format', 'text', '--model', model, '--effort', effort,

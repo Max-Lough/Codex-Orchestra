@@ -1,6 +1,6 @@
 ---
 name: orchestra-review
-description: "Run an Orchestra-grade adversarial review of existing changes, a branch, or a commit range. Routes OpenAI-authored work through the installed project-scoped Claude review MCP transport; Anthropic-authored work and Claude-unavailable fallback go to the fresh native Sol reviewer. Use for requested reviews and changes that arrived outside the normal campaign loop."
+description: "Run an Orchestra-grade adversarial review of existing changes, a branch, or a commit range. Routes GPT-authored work through the installed project-scoped Claude review MCP transport; Anthropic-authored work and Claude-unavailable fallback go to the fresh native Sol reviewer. Use for requested reviews and changes that arrived outside the normal campaign loop."
 ---
 
 # Orchestra review
@@ -21,7 +21,7 @@ the review or applies fixes itself.
    committed change in a moving live tree. Do not silently commit arbitrary
    on-demand changes; for an uncommitted review, name exact diff commands and
    require the live tree to remain idle.
-3. **Choose the reviewer.** OpenAI-authored work → call
+3. **Choose the reviewer.** GPT-authored work → call
    `mcp__orchestra_claude_review__orchestra_review` exactly once when the Claude
    pack is installed. This is a Director transport call; the fresh Claude CLI
    process performs the independent review. Anthropic-authored work → fresh
@@ -40,7 +40,9 @@ the review or applies fixes itself.
      runner arguments where supported; prose alone configures nothing.
 5. **Dispatch and relay.** For the Claude route, pass `work_order`,
    `executor_report`, and every explicit control as typed MCP arguments, wait
-   for the single blocking call, and relay the returned text verbatim. The
+   for the single blocking call, and relay the returned text verbatim. Omit
+   `effort` for the standard `high` review, or pass `effort` with value `xhigh`
+   when the review content is unusually large or complex. The
    reviewer independently reads the diff and reruns verification. Preserve
    every finding, engine attribution, integrity warning, attempted setting,
    and finality line.

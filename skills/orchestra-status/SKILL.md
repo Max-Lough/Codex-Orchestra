@@ -17,20 +17,25 @@ through one read-only scout mission carrying the checklist below.
    `AGENTS.md` managed `ORCHESTRA:BEGIN/END` block.
 3. **Guard:** `.codex/hooks/orchestra-guard.js` presence and SessionStart plus
    PreToolUse entries in `.codex/hooks.json` that reference it.
-4. **Company:** presence of `scout.toml`, `detective.toml`, `executor.toml`,
-   `executor-heavy.toml`, `executor-heavy-xhigh.toml`, and `reviewer.toml` under
-   `.codex/agents/`; list other TOML profiles as specialists or pack roles.
+4. **Company:** presence of `scout.toml`, `detective.toml`,
+   `executor-mechanical.toml`, `executor.toml`, `executor-sol-xhigh.toml`,
+   `executor-heavy.toml`, `executor-heavy-xhigh.toml`,
+   `executor-principal-max.toml`, and `reviewer.toml` under `.codex/agents/`;
+   list other TOML profiles as specialists or pack roles.
 5. **Pack:** `.codex/orchestra-install.json` recorded packs/specialists,
    whether `.codex/config.toml` contains the managed
    `orchestra_claude_review` MCP block, and whether
    `.codex/hooks/orchestra-review-mcp.js` plus
-   `.codex/hooks/orchestra-review.js` exist.
+   `.codex/hooks/orchestra-review.js`, `.codex/hooks/orchestra-engine-launch.js`,
+   and `.codex/hooks/orchestra-visual.js` exist, plus whether
+   `.codex/agents/modeler-claude.toml` provides the visual executor launcher.
 6. **Skills:** directories under `.agents/skills/`, including the core
    `orchestra-plan`, `orchestra-review`, and `orchestra-status` skills.
 7. **Config:** from `.codex/orchestra.json`, or defaults when absent: verification
    manifest, director blocked/allowed/plan patterns, and the `claude`
-   runner block including model, effort, timeout, retries, auth probe,
-   do-not-run count, worktree root, and integrity-ignore count.
+   runner block including review and visual model, effort, timeout, survivor
+   reaping, retries, auth probe, do-not-run count, worktree root, and
+   integrity-ignore count.
 8. **Claude lane:** read-only availability check for the Claude CLI, respecting
    configured `CLAUDE_BIN`. Do not run a doctor that repairs files during this
    status command; name it as a suggested fix instead.
@@ -40,14 +45,14 @@ through one read-only scout mission carrying the checklist below.
 
 ```text
 ORCHESTRA STATUS
-Mode:         DIRECTOR | PAUSED
+Mode:         DIRECTOR | DORMANT | PAUSED
 Enforcement:  active | paused (.codex/orchestra.pause) | paused (ORCHESTRA_PAUSE=1) | guard not wired
 Protocol:     .codex/ORCHESTRA.md <present (vX.Y.Z|unversioned)|MISSING> · AGENTS.md block <present|MISSING>
-Company:      scout <✓|✗> detective <✓|✗> executor <✓|✗> executor-heavy <✓|✗> executor-heavy-xhigh <✓|✗> reviewer <✓|✗> · specialists: <names|none>
+Company:      scout <✓|✗> detective <✓|✗> executor-mechanical <✓|✗> executor <✓|✗> executor-sol-xhigh <✓|✗> executor-heavy <✓|✗> executor-heavy-xhigh <✓|✗> executor-principal-max <✓|✗> reviewer <✓|✗> · specialists: <names|none>
 Packs:        <names|none> · Claude review MCP <✓|✗>
 Skills:       <names|none>
-Review route: OpenAI-authored → Claude <available|UNAVAILABLE|pack not installed> · Anthropic-authored → native Sol
-Claude config: model <id|default> · effort <level|default> · timeout <ms|default> · doNotRun <n>
+Review route: GPT-authored → Claude <available|UNAVAILABLE|pack not installed> · Anthropic-authored → native Sol
+Claude config: review <model>/<effort>/<timeout>/<killSurvivors> · visual <model>/<effort>/<timeout>/<killSurvivors> · doNotRun <n>
 Policy:       blocked-patterns <n> · allowed-tools <names|none> · plan-patterns <n>
 Verification: manifest present (full: <command>) | no manifest
 Plans:        <n> plan file(s) · ledger <present|none>

@@ -1,6 +1,6 @@
 name = "modeler"
-description = "Orchestra specialist executor for 3D asset work in Blender and Godot: scripted mesh/material creation, GLB export, Godot import, scene/collider/LOD wiring, render inspection, and asset verification."
-model = "gpt-5.6-terra"
+description = "Orchestra GPT-6 Astra specialist executor for 3D asset work in Blender and Godot. Pair with the user-routable modeler-claude lane when an independent Opus 5.5 visual-development partner is useful."
+model = "gpt-6-astra"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """

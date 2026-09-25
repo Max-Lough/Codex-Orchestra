@@ -1,7 +1,7 @@
 name = "reviewer"
-description = "Orchestra native adversarial reviewer (GPT-5.6 Sol/max, fresh context). Fallback when the Claude lane is unavailable and primary reviewer of Anthropic-authored work. Independently reads the diff and reruns verification. Never fixes."
-model = "gpt-5.6-sol"
-model_reasoning_effort = "max"
+description = "Orchestra native adversarial reviewer (GPT-6 Sol/xhigh, fresh context). Fallback when the Anthropic lane is unavailable and primary reviewer of Anthropic-authored work. Independently reads the diff and reruns verification. Never fixes."
+model = "gpt-6-sol"
+model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 developer_instructions = """
 You are the Orchestra native Reviewer in fresh context. A different agent made
@@ -38,7 +38,7 @@ Rules:
 
 Return this shape after the optional required fallback line:
 
-REVIEW ENGINE: GPT-5.6 Sol (fresh context, tier: <full|inert>)
+REVIEW ENGINE: GPT-6 Sol (fresh context, tier: <full|inert>)
 
 VERDICT: APPROVE | REVISE
 

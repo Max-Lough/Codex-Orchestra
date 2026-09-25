@@ -8,6 +8,10 @@
  * agent profiles disable hooks in their spawned sessions, so executors and
  * reviewers can use their role-appropriate tools.
  *
+ * Director law activates only when the latest primary-session turn-context
+ * entry positively names GPT-6 Astra as the driving model. Non-Astra and
+ * undetermined sessions run as ordinary Codex sessions.
+ *
  * This is intentionally a guardrail rather than a security boundary. Hosted
  * tools and specialized paths may not traverse local hooks. The protocol in
  * AGENTS.md remains authoritative.
@@ -20,6 +24,12 @@ const path = require('path');
 const CONFIG_BASENAME = 'orchestra.json';
 const PAUSE_BASENAME = 'orchestra.pause';
 const PLANS_DIRNAME = 'plans';
+
+// Codex JSONL transcripts record the selected model in
+// { type: turn_context, payload: { model: ... } }. Provider-prefixed
+// ids are accepted, but lookalike suffixes/prefixes are not positive evidence.
+const ASTRA_MODEL = /^(?:[^/:]+[/:])*gpt-6-astra(?:\[[^\]]+\])?$/i;
+const TRANSCRIPT_CHUNK_BYTES = 1024 * 1024;
 
 // Canonical Codex names plus compatibility aliases used by local clients.
 const BLOCKED = new Set([
@@ -129,6 +139,66 @@ function isSubagent(input) {
   const role = (process.env.ORCHESTRA_ROLE || '').trim().toLowerCase();
   if (EXTERNAL_WORKER_ROLES.has(role)) return true;
   return role !== '' && role !== 'director';
+}
+
+function classifyTurnContext(rawLine) {
+  const line = rawLine.trim();
+  if (line === '') return null;
+  let entry;
+  try {
+    entry = JSON.parse(line);
+  } catch (_) {
+    return null;
+  }
+  if (!entry || entry.type !== 'turn_context' || !entry.payload) return null;
+  const model = entry.payload.model;
+  if (typeof model !== 'string' || model === '' || model === '<synthetic>') {
+    return { state: 'unknown' };
+  }
+  return ASTRA_MODEL.test(model)
+    ? { state: 'astra', model }
+    : { state: 'other', model };
+}
+
+function drivingModel(input) {
+  let fd;
+  try {
+    const transcript = input.transcript_path;
+    if (typeof transcript !== 'string' || transcript === '') return { state: 'unknown' };
+    const stat = fs.statSync(transcript);
+    if (!stat.isFile() || stat.size === 0) return { state: 'unknown' };
+
+    fd = fs.openSync(transcript, 'r');
+    let position = stat.size;
+    let suffix = Buffer.alloc(0);
+    while (position > 0) {
+      const size = Math.min(TRANSCRIPT_CHUNK_BYTES, position);
+      position -= size;
+      const chunk = Buffer.allocUnsafe(size);
+      fs.readSync(fd, chunk, 0, size, position);
+      const data = suffix.length ? Buffer.concat([chunk, suffix]) : chunk;
+      let end = data.length;
+      for (let index = data.length - 1; index >= 0; index -= 1) {
+        if (data[index] !== 0x0a) continue;
+        const evidence = classifyTurnContext(data.subarray(index + 1, end).toString('utf8'));
+        if (evidence !== null) return evidence;
+        end = index;
+      }
+      suffix = data.subarray(0, end);
+    }
+    const evidence = classifyTurnContext(suffix.toString('utf8'));
+    return evidence === null ? { state: 'unknown' } : evidence;
+  } catch (_) {
+    return { state: 'unknown' };
+  } finally {
+    if (fd !== undefined) {
+      try { fs.closeSync(fd); } catch (_) { /* best effort */ }
+    }
+  }
+}
+
+function orchestraActive(input) {
+  return drivingModel(input).state === 'astra';
 }
 
 function compileRegexes(values) {
@@ -584,6 +654,7 @@ function main(raw) {
 
   if (event === 'SessionStart') {
     if (isSubagent(input)) return allow();
+    if (!orchestraActive(input)) return allow();
     if (isPaused(root)) {
       return sessionContext(
         'Orchestra is paused for this project. Do not claim independent ' +
@@ -601,6 +672,7 @@ function main(raw) {
 
   if (event !== 'PreToolUse') return allow();
   if (isPaused(root) || isSubagent(input)) return allow();
+  if (!orchestraActive(input)) return allow();
 
   const toolName = input.tool_name;
   if (typeof toolName !== 'string' || toolName === '') return allow();

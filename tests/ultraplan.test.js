@@ -208,10 +208,42 @@ if (process.platform === 'win32') {
     20000
   );
   check(
-    'planning rejects percent-bearing shim tokens before the engine launches',
+    'planning rejects percent-bearing model input before the engine launches',
     /VERDICT: ULTRAPLAN_UNAVAILABLE/.test(result.stdout) &&
-      /percent characters are not supported in Windows command-shim tokens/.test(result.stdout) &&
+      /planning model contains unsupported characters/.test(result.stdout) &&
       !fs.existsSync(marker) && !fs.existsSync(record),
+    result.stdout + result.stderr
+  );
+}
+
+section('5. CLI and engine settings fail closed');
+{
+  const fx = fixture();
+  const record = path.join(fx.dir, 'supported-alias.json');
+  const supported = invoke(fx, { STUB_RECORD: record }, [
+    '--model', 'claude-opus-4-6[1m]', '--effort', 'xhigh',
+  ]);
+  const got = JSON.parse(fs.readFileSync(record, 'utf8'));
+  check(
+    'supported Claude aliases and known effort values reach the planner',
+    supported.status === 0 && got.args.includes('claude-opus-4-6[1m]') && got.args.includes('xhigh'),
+    supported.stdout + supported.stderr
+  );
+}
+for (const item of [
+  { name: 'trailing-backslash model', env: {}, args: ['--model', 'opus\\'], pattern: /planning model contains unsupported characters/ },
+  { name: 'unknown effort', env: {}, args: ['--effort', 'turbo'], pattern: /planning effort must be/ },
+  { name: 'unknown option', env: {}, args: ['--bogus', 'value'], pattern: /unknown option/ },
+  { name: 'equals-form option', env: {}, args: ['--effort=xhigh'], pattern: /unknown option/ },
+  { name: 'invalid timeout', env: { ORCHESTRA_CLAUDE_PLAN_TIMEOUT_MS: 'nope' }, args: [], pattern: /must be a positive integer/ },
+]) {
+  const fx = fixture();
+  const record = path.join(fx.dir, 'must-not-launch.json');
+  const result = invoke(fx, Object.assign({ STUB_RECORD: record }, item.env), item.args);
+  check(
+    'planning rejects ' + item.name + ' before launch',
+    /VERDICT: ULTRAPLAN_UNAVAILABLE/.test(result.stdout) && item.pattern.test(result.stdout) &&
+      !fs.existsSync(record),
     result.stdout + result.stderr
   );
 }
