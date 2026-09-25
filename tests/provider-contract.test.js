@@ -38,6 +38,12 @@ const claudeReviewTransport = read('packs/claude/hooks/orchestra-review-mcp.js')
 const guard = read('hooks/orchestra-guard.js');
 const claudeReviewRunner = read('packs/claude/hooks/orchestra-review.js');
 const claudeVisualRunner = read('packs/claude/hooks/orchestra-visual.js');
+const claudeEngineLaunch = read('packs/claude/hooks/orchestra-engine-launch.js');
+const planSkill = read('skills/orchestra-plan/SKILL.md');
+const reviewSkill = read('skills/orchestra-review/SKILL.md');
+const statusSkill = read('skills/orchestra-status/SKILL.md');
+const solXhighProfile = read('agents/executor-sol-xhigh.toml');
+const workflow = read('.github/workflows/test.yml');
 
 check('protocol names Codex as the Director surface', /Codex.+Director|Director.+Codex/is.test(protocol));
 check('protocol defines the Luna/Sol/Astra execution ladder', /Mechanical executor.+GPT-6 Luna.+xhigh/is.test(protocol) && /Standard executor.+GPT-6 Sol.+high/is.test(protocol) && /Heavy executor.+GPT-6 Astra.+high/is.test(protocol) && /Exceptional principal.+GPT-6 Astra.+max/is.test(protocol));
@@ -52,17 +58,21 @@ const core = [
   'detective.toml',
   'executor-mechanical.toml',
   'executor.toml',
+  'executor-sol-xhigh.toml',
   'executor-heavy.toml',
   'executor-heavy-xhigh.toml',
   'executor-principal-max.toml',
   'reviewer.toml',
 ];
-check('eight OpenAI core profiles exist', core.every((name) => fs.existsSync(path.join(ROOT, 'agents', name))));
+check('nine GPT core profiles exist', core.every((name) => fs.existsSync(path.join(ROOT, 'agents', name))));
+check('higher Sol effort has an explicit supported profile', /model = "gpt-6-sol"/.test(solXhighProfile) && /model_reasoning_effort = "xhigh"/.test(solXhighProfile));
 check('core profiles are TOML rather than Claude markdown profiles', !fs.readdirSync(path.join(ROOT, 'agents')).some((name) => name.endsWith('.md')));
 check('Claude review avoids the broken custom-agent MCP boundary', !fs.existsSync(path.join(ROOT, 'packs', 'claude', 'agents', 'reviewer-claude.toml')) && /project-level MCP block/.test(protocol));
 check('Claude reviewer uses one required project-scoped blocking MCP transport', /mcp__orchestra_claude_review__orchestra_review/.test(protocol) && /\[mcp_servers\.orchestra_claude_review\]/.test(claudePackConfig) && /required = true/.test(claudePackConfig));
 check('Claude review policy is Opus 5.5 high with xhigh selectable', /Opus 5\.5 \/ high \(xhigh selectable\)/.test(protocol) && /model: 'opus'/.test(claudeReviewRunner) && /effort: 'high'/.test(claudeReviewRunner) && /--effort/.test(claudeReviewRunner));
 check('Claude visual executor is launchable and user-routable', fs.existsSync(path.join(ROOT, 'packs', 'claude', 'agents', 'modeler-claude.toml')) && /Opus 5\.5/.test(claudeVisualRunner) && /executor-claude-visual-external/.test(claudeVisualRunner) && /\['high', 'xhigh'\]/.test(claudeVisualRunner));
+check('Claude lanes share safe Windows engine launch construction', [claudeReviewRunner, claudePlanRunner, claudeVisualRunner].every((source) => source.includes("require('./orchestra-engine-launch')")) && claudeEngineLaunch.includes('windowsVerbatimArguments: true') && claudeEngineLaunch.includes('percent characters are not supported'));
+check('write-capable visual lane uses process-tree supervision and survivor cleanup', /jobrun\.superviseSync/.test(claudeVisualRunner) && /killSurvivors: cfg\.killSurvivors/.test(claudeVisualRunner));
 check('Claude review transport makes empty output fail loud', /!out\.trim\(\)/.test(claudeReviewTransport) && /VERDICT: REVIEW_UNAVAILABLE/.test(claudeReviewTransport));
 check('Claude planning consultation is isolated from a co-installed Claude Director', claudePlanRunner.includes("'--restricted', '--safe-mode'") && claudePlanRunner.includes("ORCHESTRA_ROLE: 'planner-claude-external'"));
 
@@ -73,6 +83,10 @@ check('inverse packs/codex surface is retired', !hasFiles(path.join(ROOT, 'packs
 
 const skillNames = ['orchestra-plan', 'orchestra-review', 'orchestra-status'];
 check('three Codex-scoped orchestration skills exist', skillNames.every((name) => fs.existsSync(path.join(ROOT, 'skills', name, 'SKILL.md'))));
+check('planning skill exposes the full Luna/Sol/Astra executor ladder', ['executor-mechanical', 'executor', 'executor-sol-xhigh', 'executor-heavy', 'executor-heavy-xhigh', 'executor-principal-max'].every((name) => planSkill.includes(name)));
+check('status skill health-checks the full executor ladder and visual pack lane', ['executor-mechanical.toml', 'executor-sol-xhigh.toml', 'executor-principal-max.toml', 'orchestra-engine-launch.js', 'orchestra-visual.js', 'modeler-claude.toml'].every((name) => statusSkill.includes(name)));
+check('active skills use GPT authorship and no retired GPT-5.6/Terra ladder labels', !/GPT-5\.6|gpt-5\.6|Terra|OpenAI-authored/.test(planSkill + reviewSkill + statusSkill));
+check('Windows CI gates the visual executor regression suite', /node tests\/visual-executor\.test\.js/.test(workflow));
 check('active documentation does not advertise Claude as Director', !/Claude (?:Code )?as (?:the )?Director/i.test(protocol + readme));
 
 if (process.exitCode) process.exit(process.exitCode);

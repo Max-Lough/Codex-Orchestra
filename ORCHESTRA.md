@@ -42,10 +42,11 @@ quietly become the worker.
 | Detective | `detective` | GPT-6 Sol / high | read-only *why/how* investigation; evidence chains and confidence grades |
 | Mechanical executor | `executor-mechanical` | GPT-6 Luna / xhigh | airtight mechanical changes whose meaning is settled |
 | Standard executor | `executor` | GPT-6 Sol / high | ordinary scoped edits, commands, builds, and tests; higher Sol effort is selectable |
+| Higher-effort standard | `executor-sol-xhigh` | GPT-6 Sol / xhigh | standard-scope work needing more reasoning without an Astra escalation |
 | Heavy executor | `executor-heavy` | GPT-6 Astra / high | hard, coupled, data-risky, or escalated work chosen during planning |
 | Principal executor | `executor-heavy-xhigh` | GPT-6 Astra / xhigh | unusually hard or split-resistant implementation |
 | Exceptional principal | `executor-principal-max` | GPT-6 Astra / max | deep planning or extreme work after multiple material hang-ups only |
-| Native reviewer | `reviewer` | GPT-6 Sol / xhigh, fresh context | fallback review; primary review of Anthropic-authored work |
+| Native reviewer | `reviewer` | GPT-6 Sol / xhigh, fresh context | fallback review; primary review of Anthropic-authored work; xhigh preserves max for exceptional planning or repeated hang-ups |
 | Claude reviewer † | project MCP transport → Claude CLI | Opus 5.5 / high (xhigh selectable) | default independent review of GPT-authored work |
 | Claude visual executor † | `modeler-claude` launcher → Claude CLI | Opus 5.5 / high (xhigh selectable) | user-routable Blender/Godot visual-development partner |
 

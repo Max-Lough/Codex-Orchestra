@@ -26,6 +26,7 @@ before it is reported complete.
 | Detective | `detective` | GPT-6 Sol / high | read-only causal investigation and invariant discovery |
 | Mechanical executor | `executor-mechanical` | GPT-6 Luna / xhigh | airtight mechanical changes and codemods |
 | Standard executor | `executor` | GPT-6 Sol / high | ordinary scoped implementation; higher Sol effort is selectable |
+| Higher-effort standard | `executor-sol-xhigh` | GPT-6 Sol / xhigh | standard-scope work needing more reasoning without an Astra escalation |
 | Heavy executor | `executor-heavy` | GPT-6 Astra / high | hard or escalated implementation |
 | Principal executor | `executor-heavy-xhigh` | GPT-6 Astra / xhigh | unusually hard, split-resistant implementation |
 | Exceptional principal | `executor-principal-max` | GPT-6 Astra / max | deep planning or extreme work after repeated hang-ups only |
@@ -121,6 +122,7 @@ The per-harness pause files (`.claude/orchestra.pause` and
 |   |   |-- detective.toml
 |   |   |-- executor-mechanical.toml
 |   |   |-- executor.toml
+|   |   |-- executor-sol-xhigh.toml
 |   |   |-- executor-heavy.toml
 |   |   |-- executor-heavy-xhigh.toml
 |   |   |-- executor-principal-max.toml
@@ -211,6 +213,7 @@ defaults below. Unknown keys are ignored so project-owned extensions survive.
     "visualModel": "opus",
     "visualEffort": "high",
     "visualTimeoutMs": 1800000,
+    "visualKillSurvivors": true,
     "reviewTimeoutMs": 1800000,
     "reviewRetries": 1,
     "authProbe": true,

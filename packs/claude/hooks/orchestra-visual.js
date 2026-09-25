@@ -2,24 +2,65 @@
 'use strict';
 
 const fs = require('fs');
+const crypto = require('crypto');
+const os = require('os');
 const path = require('path');
 const { spawnSync } = require('child_process');
+const jobrun = require('./orchestra-jobrun');
+const engineLaunch = require('./orchestra-engine-launch');
 
 const DEFAULTS = {
   bin: 'claude',
   model: 'opus', // Stable Claude CLI alias; harness policy is Opus 5.5.
   effort: 'high',
   timeoutMs: 1800000,
+  killSurvivors: true,
 };
 
 function value(argv, flag) {
   const index = argv.indexOf(flag);
-  return index >= 0 && index + 1 < argv.length ? argv[index + 1] : undefined;
+  if (index < 0) return undefined;
+  if (index + 1 >= argv.length || String(argv[index + 1]).startsWith('--')) {
+    throw new Error(flag + ' requires a value');
+  }
+  return argv[index + 1];
 }
 
 function positiveInteger(input, fallback) {
   const number = Number(input);
   return Number.isInteger(number) && number > 0 ? number : fallback;
+}
+
+function booleanValue(input, fallback, label) {
+  if (input === undefined || input === '') return fallback;
+  if (typeof input === 'boolean') return input;
+  const normalized = String(input).trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(normalized)) return true;
+  if (['0', 'false', 'no', 'off'].includes(normalized)) return false;
+  throw new Error(label + ' must be true or false');
+}
+
+function isContained(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function readWorkOrder(root, file) {
+  const lexicalRoot = path.resolve(root);
+  const target = path.resolve(lexicalRoot, file);
+  if (!isContained(lexicalRoot, target)) {
+    throw new Error('--work-order must stay inside the project root');
+  }
+  const lstat = fs.lstatSync(target);
+  if (!lstat.isFile() || lstat.isSymbolicLink()) {
+    throw new Error('--work-order must name a regular project file, not a link');
+  }
+  const realRoot = fs.realpathSync(lexicalRoot);
+  const realTarget = fs.realpathSync(target);
+  if (!isContained(realRoot, realTarget)) {
+    throw new Error('--work-order resolves outside the project root');
+  }
+  return fs.readFileSync(realTarget, 'utf8');
 }
 
 function readConfig(root) {
@@ -45,7 +86,7 @@ function resolveSettings(root, argv) {
   if (!['high', 'xhigh'].includes(effort)) {
     throw new Error('visual effort must be high or xhigh');
   }
-  return {
+  const resolved = {
     bin: String(value(argv, '--claude-bin') || process.env.CLAUDE_BIN || config.bin || DEFAULTS.bin).trim(),
     model: String(value(argv, '--model') || process.env.ORCHESTRA_CLAUDE_VISUAL_MODEL || config.visualModel || DEFAULTS.model).trim(),
     effort,
@@ -53,7 +94,17 @@ function resolveSettings(root, argv) {
       value(argv, '--timeout-ms') || process.env.ORCHESTRA_CLAUDE_VISUAL_TIMEOUT_MS || config.visualTimeoutMs,
       DEFAULTS.timeoutMs
     ),
+    killSurvivors: booleanValue(
+      process.env.ORCHESTRA_CLAUDE_VISUAL_KILL_SURVIVORS ?? config.visualKillSurvivors,
+      DEFAULTS.killSurvivors,
+      'visual survivor reaping'
+    ),
   };
+  if (!resolved.bin) throw new Error('Claude binary must not be empty');
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:/\-\[\]]*$/.test(resolved.model)) {
+    throw new Error('visual model contains unsupported characters');
+  }
+  return resolved;
 }
 
 function buildPrompt(workOrder) {
@@ -101,24 +152,51 @@ CONCERNS
 `;
 }
 
-function unavailable(reason) {
+function unavailable(reason, census) {
   process.stdout.write(
     'EXEC ENGINE: NONE - no Anthropic visual executor result was produced\n' +
+    (census ? census + '\n' : '') +
     'STATUS: EXEC_UNAVAILABLE\n\nREASON\n- ' + String(reason).replace(/[\r\n]+/g, ' ') + '\n'
   );
   process.exitCode = 1;
 }
 
+function runSupervised(command, args, options, cfg) {
+  const token = crypto.randomBytes(8).toString('hex');
+  const spec = engineLaunch.engineLaunchSpec(command, args);
+  const childOptions = engineLaunch.engineSpawnOptions(options);
+  if (spec.windowsVerbatimArguments) childOptions.windowsVerbatimArguments = true;
+  if (String(process.env.ORCHESTRA_JOBRUN || '').trim().toLowerCase() === 'off') {
+    return {
+      result: spawnSync(spec.command, spec.args, childOptions),
+      census: jobrun.censusBlock(null, { token, disabled: true, disabledWhy: 'ORCHESTRA_JOBRUN=off' }),
+    };
+  }
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'orchestra-claude-visual-jobrun-'));
+  try {
+    const result = jobrun.superviseSync(spec.command, spec.args, childOptions, {
+      receiptFile: path.join(scratch, 'jobrun.json'),
+      deadlineMs: cfg.timeoutMs,
+      killSurvivors: cfg.killSurvivors,
+      token,
+      scratchDir: scratch,
+    });
+    return { result, census: jobrun.censusBlock(result.receipt, { token }) };
+  } finally {
+    fs.rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
 function main() {
   const argv = process.argv.slice(2);
-  const workOrderPath = value(argv, '--work-order');
-  if (!workOrderPath) return unavailable('--work-order is required');
   const root = path.resolve(process.env.CODEX_PROJECT_DIR || process.cwd());
   let cfg;
   let workOrder;
   try {
+    const workOrderPath = value(argv, '--work-order');
+    if (!workOrderPath) throw new Error('--work-order is required');
     cfg = resolveSettings(root, argv);
-    workOrder = fs.readFileSync(path.resolve(root, workOrderPath), 'utf8');
+    workOrder = readWorkOrder(root, workOrderPath);
   } catch (error) {
     return unavailable(error.message);
   }
@@ -131,24 +209,29 @@ function main() {
     '--disallowedTools', 'Agent,NotebookEdit,mcp__*',
     '--disable-slash-commands',
   ];
-  const result = spawnSync(cfg.bin, args, {
-    cwd: root,
-    input: buildPrompt(workOrder),
-    encoding: 'utf8',
-    windowsHide: true,
-    shell: process.platform === 'win32' && /\.(?:cmd|bat)$/i.test(cfg.bin),
-    timeout: cfg.timeoutMs,
-    maxBuffer: 16 * 1024 * 1024,
-    env: { ...process.env, ORCHESTRA_ROLE: 'executor-claude-visual-external' },
-  });
-  if (result.error) return unavailable(result.error.message);
-  if (result.signal || result.status !== 0) {
-    return unavailable('Claude CLI exited abnormally (status=' + result.status + ', signal=' + (result.signal || 'none') + ')');
+  let supervised;
+  try {
+    supervised = runSupervised(cfg.bin, args, {
+      cwd: root,
+      input: buildPrompt(workOrder),
+      timeout: cfg.timeoutMs,
+      env: { ...process.env, ORCHESTRA_ROLE: 'executor-claude-visual-external' },
+    }, cfg);
+  } catch (error) {
+    return unavailable(error.message);
   }
-  if (!String(result.stdout || '').trim()) return unavailable('Claude CLI wrote no executor report');
+  const result = supervised.result;
+  const census = supervised.census;
+  if (result.supervisionError) return unavailable('Claude CLI process supervision failed: ' + result.supervisionError, census);
+  if (result.error) return unavailable(result.error.message, census);
+  if (result.signal || result.status !== 0) {
+    return unavailable('Claude CLI exited abnormally (status=' + result.status + ', signal=' + (result.signal || 'none') + ')', census);
+  }
+  if (!String(result.stdout || '').trim()) return unavailable('Claude CLI wrote no executor report', census);
   process.stdout.write(
     'EXEC ENGINE: Claude CLI (requested model: ' + cfg.model +
-    ', policy: Opus 5.5, effort: ' + cfg.effort + ', fresh context)\n\n' +
+    ', policy: Opus 5.5, effort: ' + cfg.effort + ', fresh context)\n' +
+    census + '\n\n' +
     String(result.stdout).trimEnd() + '\n'
   );
 }

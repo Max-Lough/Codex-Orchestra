@@ -153,6 +153,7 @@ Durable settings live under `claude` in `.codex/orchestra.json`:
     "visualModel": "opus",
     "visualEffort": "high",
     "visualTimeoutMs": 1800000,
+    "visualKillSurvivors": true,
     "reviewTimeoutMs": 1800000,
     "reviewRetries": 0,
     "reviewKillSurvivors": true,
@@ -177,6 +178,7 @@ default.
 | `visualModel` | `ORCHESTRA_CLAUDE_VISUAL_MODEL` | `opus` |
 | `visualEffort` | `ORCHESTRA_CLAUDE_VISUAL_EFFORT` | `high` (`xhigh` selectable) |
 | `visualTimeoutMs` | `ORCHESTRA_CLAUDE_VISUAL_TIMEOUT_MS` | `1800000` |
+| `visualKillSurvivors` | `ORCHESTRA_CLAUDE_VISUAL_KILL_SURVIVORS` | `true` |
 | `reviewTimeoutMs` | `ORCHESTRA_CLAUDE_REVIEW_TIMEOUT_MS` | `1800000` |
 | `reviewRetries` | `ORCHESTRA_CLAUDE_REVIEW_RETRIES` | `0` |
 | `reviewKillSurvivors` | `ORCHESTRA_CLAUDE_REVIEW_KILL_SURVIVORS` | `true` |
@@ -211,7 +213,7 @@ sets `ORCHESTRA_ROLE=planner-claude-external`, and exposes no repository tools.
 
 ## Process supervision
 
-The real Claude review and planning invocations run under the shared
+The real Claude review, planning, and visual-execution invocations run under the shared
 process-tree supervisor. Each attempted run reports a process census before
 the Claude output or unavailable verdict. Missing or incomplete supervisor
 receipts fail closed. Attributed descendants that outlive Claude are reaped by
@@ -220,7 +222,9 @@ default.
 For review, set `ORCHESTRA_CLAUDE_REVIEW_KILL_SURVIVORS=0` or
 `claude.reviewKillSurvivors=false` only for diagnosis. Planning uses
 `ORCHESTRA_CLAUDE_PLAN_KILL_SURVIVORS` with a default of `true`.
-`ORCHESTRA_JOBRUN=off` disables supervision for both lanes and is stated
+The visual executor uses `ORCHESTRA_CLAUDE_VISUAL_KILL_SURVIVORS` and also
+defaults to `true`; keep it enabled for write-capable work. `ORCHESTRA_JOBRUN=off`
+disables supervision for all three lanes and is stated
 loudly in their output.
 
 Every receipt and process-census block labels overall descendant coverage

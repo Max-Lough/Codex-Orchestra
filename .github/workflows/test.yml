@@ -73,5 +73,8 @@ jobs:
       - name: Claude planning lane suite
         run: node tests/ultraplan.test.js
 
+      - name: Claude visual executor suite
+        run: node tests/visual-executor.test.js
+
       - name: Live MCP probe remains explicitly opt-in
         run: node tests/review-mcp-live.test.js

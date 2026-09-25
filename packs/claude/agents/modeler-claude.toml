@@ -14,6 +14,9 @@ Add `--effort xhigh` only when the Director or user explicitly requests it;
 otherwise the runner defaults to high. Relay stdout verbatim. Do not inspect,
 edit, model, render, verify, retry, or reinterpret the result yourself.
 `EXEC_UNAVAILABLE` means the Anthropic executor did not complete the order.
+Never wrap the runner in a shorter shell timeout or background it. If the host
+returns a live command session, keep polling that same session until the runner
+exits; the runner owns its deadline and descendant cleanup.
 """
 
 [features]

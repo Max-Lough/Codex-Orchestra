@@ -1,6 +1,6 @@
 ---
 name: orchestra-review
-description: "Run an Orchestra-grade adversarial review of existing changes, a branch, or a commit range. Routes OpenAI-authored work through the installed project-scoped Claude review MCP transport; Anthropic-authored work and Claude-unavailable fallback go to the fresh native Sol reviewer. Use for requested reviews and changes that arrived outside the normal campaign loop."
+description: "Run an Orchestra-grade adversarial review of existing changes, a branch, or a commit range. Routes GPT-authored work through the installed project-scoped Claude review MCP transport; Anthropic-authored work and Claude-unavailable fallback go to the fresh native Sol reviewer. Use for requested reviews and changes that arrived outside the normal campaign loop."
 ---
 
 # Orchestra review
@@ -21,7 +21,7 @@ the review or applies fixes itself.
    committed change in a moving live tree. Do not silently commit arbitrary
    on-demand changes; for an uncommitted review, name exact diff commands and
    require the live tree to remain idle.
-3. **Choose the reviewer.** OpenAI-authored work → call
+3. **Choose the reviewer.** GPT-authored work → call
    `mcp__orchestra_claude_review__orchestra_review` exactly once when the Claude
    pack is installed. This is a Director transport call; the fresh Claude CLI
    process performs the independent review. Anthropic-authored work → fresh

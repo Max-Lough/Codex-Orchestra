@@ -60,7 +60,6 @@ const DIRECTOR_SAFE_NESTED = new Set([
 const EXTERNAL_WORKER_ROLES = new Set([
   'reviewer-codex-external',
   'executor-codex-external',
-  'executor-claude-visual-external',
   'planner-codex-external',
 ]);
 const FORBIDDEN_EXEC_IDENTIFIERS = new Set([

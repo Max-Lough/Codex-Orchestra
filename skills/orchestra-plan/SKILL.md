@@ -24,10 +24,14 @@ narrow plan exception. It never implements repository work.
    Split author-plus-migrate work. Fan-out migrations use isolated/disjoint
    orders and finish with a sweep for missed consumers. A generator, migrator,
    or pipeline must validate its own output.
-5. **Route execution.** Use `executor` (Terra/high) for routine work,
-   `executor-heavy` (Sol/high) for hard/coupled/escalated work, and
-   `executor-heavy-xhigh` only for the hardest split-resistant order. Choose at
-   plan time; a worker never self-promotes.
+5. **Route execution.** Use `executor-mechanical` (GPT-6 Luna/xhigh) only when
+   the goal and meaning are airtight; `executor` (GPT-6 Sol/high) for ordinary
+   scoped work; and `executor-sol-xhigh` when that same standard scope needs
+   more reasoning depth. Use `executor-heavy` (GPT-6 Astra/high) for hard,
+   coupled, data-risky, or escalated work and `executor-heavy-xhigh` (Astra/
+   xhigh) for unusually split-resistant work. Reserve `executor-principal-max`
+   (Astra/max) for deep planning or extreme orders after multiple material
+   hang-ups. Choose at plan time; a worker never self-promotes.
 6. **Declare verification.** Default `TIER: full`. Use `inert` only for a
    provably behavior-neutral docs/comment/format-only diff. Name exact commands
    or say "per `.codex/orchestra.json` verification manifest." Verification is
@@ -36,7 +40,7 @@ narrow plan exception. It never implements repository work.
    campaign's cohesive diff before final report, handoff, merge, release, or
    deploy. Add an earlier checkpoint only when later work builds on an order and
    a defect could propagate, for a risk-first probe, or for heterogeneous
-   deliverables; state the reason. OpenAI-authored work routes through the
+   deliverables; state the reason. GPT-authored work routes through the
    project-scoped Claude review MCP transport when the Claude pack is installed;
    Anthropic-authored work and Claude-unavailable fallback route to fresh native
    `reviewer`. Require exact base/head refs for committed checkpoints.
@@ -67,7 +71,7 @@ Date: <date> · Status: DRAFT | APPROVED | IN FLIGHT | DONE
 ### WO-1: <title>
 - **Outcome:** <one delivered result>
 - **Kind:** <one deliverable kind>
-- **Executor:** executor | executor-heavy | executor-heavy-xhigh | <specialist>
+- **Executor:** executor-mechanical | executor | executor-sol-xhigh | executor-heavy | executor-heavy-xhigh | executor-principal-max | <specialist>
 - **Scope:** <exact paths/globs>
 - **Constraints:** <what must not change>
 - **Context to paste:** <findings and prior reports the worker cannot infer>
