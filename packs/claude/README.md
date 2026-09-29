@@ -103,7 +103,10 @@ inside a pinned checkout is contained when that checkout is removed.
 
 No retry is enabled by default: each review request makes one Claude invocation.
 An explicit retry allowance may be used only after a true runner-detected Claude
-timeout. Nonzero Claude exits and signals are terminal; authentication,
+timeout. The sole automatic exception is the complete Claude diagnostic
+`Failed to refresh OAuth token: another Claude Code process is refreshing it or
+exited mid-refresh.` The runner waits 60 seconds, then makes one fresh second
+attempt. Other nonzero Claude exits and signals are terminal; authentication,
 configuration, spawn, cancellation, overflow, and report-contract failures also
 stop after one attempt. Retries use new Claude
 processes and new pinned worktrees but produce one outcome. Every unavailable

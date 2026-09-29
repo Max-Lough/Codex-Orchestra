@@ -60,6 +60,10 @@ if (args[0] === 'auth' && args[1] === 'status') {
     console.error('not authenticated');
     process.exit(8);
   }
+  if (process.env.STUB_AUTH_LOGGED_OUT === '1') {
+    console.log(JSON.stringify({ loggedIn: false, authMethod: 'claude.ai' }));
+    process.exit(0);
+  }
   console.log('authenticated');
   process.exit(0);
 }
@@ -94,7 +98,18 @@ process.stdin.on('end', () => {
     fs.writeFileSync(process.env.STUB_ORPHAN_PID_FILE, String(orphan.pid));
   }
   const mode = process.env.STUB_MODE || 'approve';
+  const oauthRefreshRace = 'Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh.';
+  if (mode === 'oauth-refresh-race-persistent' || (mode.startsWith('oauth-refresh-race-') && count === 1)) {
+    console.error(oauthRefreshRace);
+    process.exit(9);
+  }
+  if (mode === 'oauth-refresh-generic') {
+    console.error('Failed to refresh OAuth token: token has expired.');
+    process.exit(9);
+  }
   if (mode === 'timeout') return setTimeout(() => {}, 60000);
+  if (mode === 'oauth-refresh-race-empty') return;
+  if (mode === 'oauth-refresh-race-malformed') { console.log('not a verdict'); return; }
   if (mode === 'error') { console.error('engine exploded'); process.exit(9); }
   if (mode === 'empty') return;
   if (mode === 'whitespace') { process.stdout.write('  \\r\\n\\t'); return; }
@@ -128,7 +143,7 @@ process.stdin.on('end', () => {
   if (mode === 'retry-invalid' && count === 1) { console.log('not a verdict'); return; }
   if (mode === 'unparseable') { console.log('looks fine'); return; }
   if (mode === 'duplicate') { console.log('VERDICT: APPROVE\\nVERDICT: REVISE'); return; }
-  if (mode === 'revise') {
+  if (mode === 'revise' || mode === 'oauth-refresh-race-revise') {
     console.log('VERDICT: REVISE\\n\\n## FINDINGS\\n- [MAJOR] app.js:1 - value is wrong when the changed export is loaded\\n\\n## CLAIMS CHECKED\\n- author says value changed -> REFUTED (read app.js)\\n\\n## VERIFICATION\\n- node tests/value.test.js -> FAIL (expected 2 but received 1)\\n\\n## NITS\\n- none');
     return;
   }
@@ -218,6 +233,54 @@ process.stdout.write('VERDICT: APPROVE\\n\\n## FINDINGS\\n- none\\n\\n## CLAIMS 
 }
 
 const TIMEOUT_RETRY_STUB = makeTimeoutRetryStub();
+
+function makeOAuthRaceTimeoutStub() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orchestra-oauth-timeout-stub-'));
+  cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
+  if (process.platform === 'win32') {
+    const cmd = path.join(root, 'claude-oauth-timeout.cmd');
+    fs.writeFileSync(cmd, `@echo off
+if %~1==--version goto version
+if %~1==auth goto auth
+if exist %STUB_COUNT_FILE% goto timeout
+> %STUB_COUNT_FILE% echo 1
+>&2 echo Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh.
+exit /b 9
+:timeout
+> %STUB_COUNT_FILE% echo 2
+ping -n 60 127.0.0.1 >nul
+exit /b 0
+:version
+echo Claude Code OAuth timeout stub 9.9.9
+exit /b 0
+:auth
+echo authenticated
+exit /b 0
+`, 'utf8');
+    return cmd;
+  }
+  const script = path.join(root, 'claude-oauth-timeout.js');
+  fs.writeFileSync(script, `#!/usr/bin/env node
+'use strict';
+const fs = require('fs');
+const args = process.argv.slice(2);
+if (args.includes('--version')) { console.log('Claude Code OAuth timeout stub 9.9.9'); process.exit(0); }
+if (args[0] === 'auth' && args[1] === 'status') { console.log('authenticated'); process.exit(0); }
+const countFile = process.env.STUB_COUNT_FILE;
+let count = 1;
+try { count = Number(fs.readFileSync(countFile, 'utf8')) + 1; } catch (_) {}
+fs.writeFileSync(countFile, String(count));
+if (count === 1) {
+  console.error('Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh.');
+  process.exit(9);
+}
+Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);
+`, 'utf8');
+  fs.chmodSync(script, 0o755);
+  return script;
+}
+
+const OAUTH_RACE_TIMEOUT_STUB = makeOAuthRaceTimeoutStub();
 
 function makeRepo() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'orchestra-claude-review-'));
@@ -340,6 +403,8 @@ function caseDoctor() {
   check('healthy doctor reports version and auth', /CLAUDE REVIEW DOCTOR: OK/.test(ok.stdout) && /9\.9\.9/.test(ok.stdout) && /authenticated/.test(ok.stdout), ok.stdout);
   const bad = invoke(fixture, ['--doctor'], { STUB_AUTH_FAIL: '1' });
   check('failed authentication is a non-zero doctor result', bad.status === 1 && /NEEDS ATTENTION/.test(bad.stdout) && /auth probe/.test(bad.stdout), bad.stdout + bad.stderr);
+  const loggedOut = invoke(fixture, ['--doctor'], { STUB_AUTH_LOGGED_OUT: '1' });
+  check('zero-exit auth status with loggedIn:false is a non-zero doctor result', loggedOut.status === 1 && /NEEDS ATTENTION/.test(loggedOut.stdout) && /loggedIn:false/.test(loggedOut.stdout), loggedOut.stdout + loggedOut.stderr);
   fs.mkdirSync(path.join(fixture.repo, '.codex'), { recursive: true });
   fs.writeFileSync(path.join(fixture.repo, '.codex', 'orchestra.json'), '{ broken json', 'utf8');
   const malformed = invoke(fixture, ['--doctor']);
@@ -518,6 +583,63 @@ function caseRetry() {
     STUB_COUNT_FILE: nonzeroCount,
   });
   check('nonzero Claude exit does not consume an explicit retry allowance', /^VERDICT: REVIEW_UNAVAILABLE$/m.test(nonzeroRetries.stdout) && fs.readFileSync(nonzeroCount, 'utf8') === '1' && /attempts 1\/1/.test(nonzeroRetries.stdout) && /STAGE: claude_abnormal_exit/.test(nonzeroRetries.stdout), nonzeroRetries.stdout);
+
+  const oauthSuccessFixture = makeRepo();
+  const oauthSuccessCount = path.join(oauthSuccessFixture.root, 'count.txt');
+  const oauthDelay = path.join(oauthSuccessFixture.root, 'oauth-delay.txt');
+  const oauthSuccess = invoke(oauthSuccessFixture, reviewArgs(oauthSuccessFixture).concat(['--no-auth-probe']), {
+    STUB_MODE: 'oauth-refresh-race-success',
+    STUB_COUNT_FILE: oauthSuccessCount,
+    ORCHESTRA_TEST_OAUTH_REFRESH_RETRY_DELAY_FILE: oauthDelay,
+  });
+  check('the exact OAuth refresh-lock race retries once after the documented delay', /^VERDICT: APPROVE$/m.test(oauthSuccess.stdout) && fs.readFileSync(oauthSuccessCount, 'utf8') === '2' && fs.readFileSync(oauthDelay, 'utf8') === '60000' && /attempts 2\/2/.test(oauthSuccess.stdout) && !/Failed to refresh OAuth token/.test(oauthSuccess.stdout), oauthSuccess.stdout);
+
+  const oauthGenericFixture = makeRepo();
+  const oauthGenericCount = path.join(oauthGenericFixture.root, 'count.txt');
+  const oauthGeneric = invoke(oauthGenericFixture, reviewArgs(oauthGenericFixture).concat(['--no-auth-probe', '--retries', '1']), {
+    STUB_MODE: 'oauth-refresh-generic',
+    STUB_COUNT_FILE: oauthGenericCount,
+  });
+  check('other OAuth refresh failures remain terminal', /^VERDICT: REVIEW_UNAVAILABLE$/m.test(oauthGeneric.stdout) && fs.readFileSync(oauthGenericCount, 'utf8') === '1' && /attempts 1\/1/.test(oauthGeneric.stdout), oauthGeneric.stdout);
+
+  const oauthPersistentFixture = makeRepo();
+  const oauthPersistentCount = path.join(oauthPersistentFixture.root, 'count.txt');
+  const oauthPersistentDelay = path.join(oauthPersistentFixture.root, 'oauth-delay.txt');
+  const oauthPersistent = invoke(oauthPersistentFixture, reviewArgs(oauthPersistentFixture).concat(['--no-auth-probe']), {
+    STUB_MODE: 'oauth-refresh-race-persistent',
+    STUB_COUNT_FILE: oauthPersistentCount,
+    ORCHESTRA_TEST_OAUTH_REFRESH_RETRY_DELAY_FILE: oauthPersistentDelay,
+  });
+  check('a repeated OAuth refresh-lock race is final after two total attempts', /^VERDICT: REVIEW_UNAVAILABLE$/m.test(oauthPersistent.stdout) && !/^VERDICT: APPROVE$/m.test(oauthPersistent.stdout) && fs.readFileSync(oauthPersistentCount, 'utf8') === '2' && /attempts 2\/2/.test(oauthPersistent.stdout) && /Failed to refresh OAuth token: \[REDACTED\] Claude Code process is refreshing it or exited mid-refresh\./.test(oauthPersistent.stdout) && !/Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh\./.test(oauthPersistent.stdout), oauthPersistent.stdout);
+
+  const oauthReviseFixture = makeRepo();
+  const oauthReviseCount = path.join(oauthReviseFixture.root, 'count.txt');
+  const oauthRevise = invoke(oauthReviseFixture, reviewArgs(oauthReviseFixture).concat(['--no-auth-probe']), {
+    STUB_MODE: 'oauth-refresh-race-revise',
+    STUB_COUNT_FILE: oauthReviseCount,
+    ORCHESTRA_TEST_OAUTH_REFRESH_RETRY_DELAY_FILE: path.join(oauthReviseFixture.root, 'oauth-delay.txt'),
+  });
+  check('a terminal second-attempt REVISE is reported without first-attempt diagnostics', /^VERDICT: REVISE$/m.test(oauthRevise.stdout) && fs.readFileSync(oauthReviseCount, 'utf8') === '2' && !/Failed to refresh OAuth token/.test(oauthRevise.stdout), oauthRevise.stdout);
+
+  const oauthTimeoutFixture = makeRepo();
+  const oauthTimeoutCount = path.join(oauthTimeoutFixture.root, 'count.txt');
+  const oauthTimeout = invoke(oauthTimeoutFixture, reviewArgs(oauthTimeoutFixture).concat(['--no-auth-probe', '--timeout-ms', '1000']), {
+    CLAUDE_BIN: OAUTH_RACE_TIMEOUT_STUB,
+    STUB_COUNT_FILE: oauthTimeoutCount,
+    ORCHESTRA_TEST_OAUTH_REFRESH_RETRY_DELAY_FILE: path.join(oauthTimeoutFixture.root, 'oauth-delay.txt'),
+  }, 10000);
+  check('an OAuth race followed by a timed-out second attempt is final at two calls', /^VERDICT: REVIEW_UNAVAILABLE$/m.test(oauthTimeout.stdout) && !/^VERDICT: APPROVE$/m.test(oauthTimeout.stdout) && !/^VERDICT: REVISE$/m.test(oauthTimeout.stdout) && fs.readFileSync(oauthTimeoutCount, 'utf8').trim() === '2' && /STAGE: claude_abnormal_exit,claude_timeout/.test(oauthTimeout.stdout) && /attempts 2\/2/.test(oauthTimeout.stdout), JSON.stringify({ status: oauthTimeout.status, signal: oauthTimeout.signal, error: oauthTimeout.error && oauthTimeout.error.message, stdout: oauthTimeout.stdout, stderr: oauthTimeout.stderr }, null, 2));
+
+  for (const mode of ['oauth-refresh-race-empty', 'oauth-refresh-race-malformed']) {
+    const terminalFixture = makeRepo();
+    const terminalCount = path.join(terminalFixture.root, 'count.txt');
+    const terminal = invoke(terminalFixture, reviewArgs(terminalFixture).concat(['--no-auth-probe']), {
+      STUB_MODE: mode,
+      STUB_COUNT_FILE: terminalCount,
+      ORCHESTRA_TEST_OAUTH_REFRESH_RETRY_DELAY_FILE: path.join(terminalFixture.root, 'oauth-delay.txt'),
+    });
+    check(mode + ' preserves the second-attempt terminal failure without laundering a verdict', /^VERDICT: REVIEW_UNAVAILABLE$/m.test(terminal.stdout) && !/^VERDICT: APPROVE$/m.test(terminal.stdout) && !/^VERDICT: REVISE$/m.test(terminal.stdout) && fs.readFileSync(terminalCount, 'utf8') === '2' && /attempts 2\/2/.test(terminal.stdout) && /attempt 2:/.test(terminal.stdout), terminal.stdout);
+  }
 
   const fixture = makeRepo();
   const count = path.join(fixture.root, 'count.txt');
@@ -734,6 +856,10 @@ process.on('uncaughtException', (error) => {
 });
 
 try {
+  if (process.env.ORCHESTRA_TEST_REVIEW_LANE_ONLY === 'retry') {
+    caseRetry();
+    finish();
+  }
   caseDoctor();
   casePromptAndPinnedCheckout();
   caseEnvironmentPrecedence();

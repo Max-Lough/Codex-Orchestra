@@ -34,6 +34,9 @@ const DEFAULTS = Object.freeze({
 });
 const CLAUDE_MODEL = /^[A-Za-z0-9][A-Za-z0-9._:/\-\[\]]*$/;
 const CLAUDE_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+const TRANSIENT_OAUTH_REFRESH_RACE = 'Failed to refresh OAuth token: another Claude Code process is refreshing it or exited mid-refresh.';
+const OAUTH_REFRESH_RETRY_DELAY_MS = 60000;
+const MAX_OAUTH_REFRESH_ATTEMPTS = 2;
 
 function dieUsage(message) {
   process.stderr.write('ERROR: ' + message + '\n');
@@ -296,6 +299,21 @@ function retryableProcessFailure(result) {
   return Boolean(result.error && result.error.code === 'ETIMEDOUT');
 }
 
+function transientOAuthRefreshFailure(result) {
+  if (!result || result.error || result.signal || result.status === 0) return false;
+  return [result.stdout, result.stderr]
+    .some((output) => String(output || '').includes(TRANSIENT_OAUTH_REFRESH_RACE));
+}
+
+function waitForOAuthRefreshRetry() {
+  const delayRecord = envValue('ORCHESTRA_TEST_OAUTH_REFRESH_RETRY_DELAY_FILE');
+  if (delayRecord) {
+    fs.writeFileSync(path.resolve(delayRecord), String(OAUTH_REFRESH_RETRY_DELAY_MS), 'utf8');
+    return;
+  }
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, OAUTH_REFRESH_RETRY_DELAY_MS);
+}
+
 function diagnosticPreview(value, limit = 2000, scanCap = 256 * 1024) {
   const raw = String(value || '');
   if (raw.length > scanCap) return '[diagnostic omitted: exceeded safe redaction scan cap]';
@@ -350,6 +368,16 @@ function authSummary(value) {
   return boundedDiagnostic(text.split(/\r?\n/)[0], 2000);
 }
 
+function authStatusLoggedOut(value) {
+  try {
+    const parsed = JSON.parse(String(value || '').trim());
+    return Boolean(parsed && typeof parsed === 'object' && parsed.loggedIn === false);
+  } catch (_) {
+    // Older Claude CLIs may return a human-readable status instead of JSON.
+    return false;
+  }
+}
+
 function probeClaude(cfg) {
   const version = run(cfg.bin, ['--version'], { timeout: cfg.probeTimeoutMs });
   const versionFailure = commandFailure(version);
@@ -360,6 +388,9 @@ function probeClaude(cfg) {
     const authFailure = commandFailure(auth);
     if (authFailure) return { ok: false, detail: 'Claude CLI auth probe ' + authFailure };
     authText = String(auth.stdout || auth.stderr || '').trim();
+    if (authStatusLoggedOut(authText)) {
+      return { ok: false, detail: 'Claude CLI auth probe reported loggedIn:false' };
+    }
   }
   return {
     ok: true,
@@ -651,6 +682,7 @@ function attemptReview(root, cfg, request) {
         ok: false,
         stage: processFailureStage(result),
         retryable: retryableProcessFailure(result),
+        oauthRefreshRetry: transientOAuthRefreshFailure(result),
         detail: 'Claude CLI review ' + failure,
         diagnostics: commandDiagnosticBlocks(result),
         changed,
@@ -815,7 +847,8 @@ function main() {
     noTests: args.noTests,
     forbid: Array.from(new Set(cfg.doNotRun.concat(args.forbid))).filter(Boolean),
   };
-  const maximum = cfg.retries + 1;
+  let maximum = cfg.retries + 1;
+  let oauthRefreshRetryUsed = false;
   const failures = [];
   const integrity = new Set();
   for (let attempt = 1; attempt <= maximum; attempt += 1) {
@@ -843,10 +876,15 @@ function main() {
       diagnostics: outcome.diagnostics || [],
       census: outcome.census || '',
     });
-    if (!outcome.retryable) {
-      unavailable(failures, attempt, attempt, Array.from(integrity).sort());
-      return;
+    if (outcome.oauthRefreshRetry && !oauthRefreshRetryUsed && attempt < MAX_OAUTH_REFRESH_ATTEMPTS) {
+      oauthRefreshRetryUsed = true;
+      maximum = Math.max(maximum, MAX_OAUTH_REFRESH_ATTEMPTS);
+      waitForOAuthRefreshRetry();
+      continue;
     }
+    if (outcome.retryable && attempt < maximum) continue;
+    unavailable(failures, attempt, attempt, Array.from(integrity).sort());
+    return;
   }
   unavailable(failures, maximum, maximum, Array.from(integrity).sort());
 }

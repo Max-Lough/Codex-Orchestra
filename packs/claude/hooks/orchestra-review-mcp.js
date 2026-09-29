@@ -102,7 +102,10 @@ function effectiveBackstopMs(timeoutArg, retriesArg) {
     positiveInteger(config.probeTimeoutMs) ||
     DEFAULT_PROBE_TIMEOUT_MS;
   const configured = positiveInteger(process.env.ORCHESTRA_MCP_BACKSTOP_MS);
-  const calculated = timeoutMs * (retries + 1) + probeMs + 300000;
+  // The runner may make one automatic second attempt after Claude reports its
+  // documented OAuth refresh-lock race, following a 60-second delay.
+  const maximumAttempts = Math.max(retries + 1, 2);
+  const calculated = timeoutMs * maximumAttempts + probeMs + 360000;
   return Math.min(configured || calculated, 2147000000);
 }
 
