@@ -1,6 +1,6 @@
 name = "executor-sol-xhigh"
-description = "Orchestra higher-effort standard executor (GPT-6 Sol/xhigh). Use when an otherwise standard order needs more reasoning depth without escalating to the Astra heavy/principal lane."
-model = "gpt-6-sol"
+description = "Orchestra higher-effort standard executor (GPT-6.1 Sol/xhigh). Use when an otherwise standard order needs more reasoning depth without escalating to the Astra heavy/principal lane."
+model = "gpt-6.1-sol"
 model_reasoning_effort = "xhigh"
 sandbox_mode = "workspace-write"
 developer_instructions = """

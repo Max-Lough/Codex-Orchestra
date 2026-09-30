@@ -43,10 +43,13 @@ const planSkill = read('skills/orchestra-plan/SKILL.md');
 const reviewSkill = read('skills/orchestra-review/SKILL.md');
 const statusSkill = read('skills/orchestra-status/SKILL.md');
 const solXhighProfile = read('agents/executor-sol-xhigh.toml');
+const executorProfile = read('agents/executor.toml');
+const specialistTemplate = read('agents/specialists/_TEMPLATE.toml');
+const defaultConfig = read('config.toml');
 const workflow = read('.github/workflows/test.yml');
 
 check('protocol names Codex as the Director surface', /Codex.+Director|Director.+Codex/is.test(protocol));
-check('protocol defines the Luna/Sol/Astra execution ladder', /Mechanical executor.+GPT-6 Luna.+xhigh/is.test(protocol) && /Standard executor.+GPT-6 Sol.+high/is.test(protocol) && /Heavy executor.+GPT-6 Astra.+high/is.test(protocol) && /Exceptional principal.+GPT-6 Astra.+max/is.test(protocol));
+check('protocol defines the Luna/Sol/Astra execution ladder', /Mechanical executor.+GPT-6 Luna.+xhigh/is.test(protocol) && /Standard executor.+GPT-6\.1 Sol.+high/is.test(protocol) && /Heavy executor.+GPT-6 Astra.+high/is.test(protocol) && /Exceptional principal.+GPT-6 Astra.+max/is.test(protocol));
 check('Director activation follows the latest model and unknown evidence fails open', /latest primary-session[\s\S]+gpt-6-astra/i.test(protocol) && /later non-Astra model[\s\S]+deactivates/i.test(protocol) && /unknown latest evidence fails open/i.test(protocol) && /classifyTurnContext/.test(guard) && /TRANSCRIPT_CHUNK_BYTES/.test(guard));
 check('GPT-authored campaigns route to Claude review', /GPT-authored.+mcp__orchestra_claude_review__orchestra_review/is.test(protocol));
 check('Claude unavailability is fail-loud', /CROSS-FAMILY REVIEW UNAVAILABLE.+Claude did not review/is.test(protocol));
@@ -65,7 +68,9 @@ const core = [
   'reviewer.toml',
 ];
 check('nine GPT core profiles exist', core.every((name) => fs.existsSync(path.join(ROOT, 'agents', name))));
-check('higher Sol effort has an explicit supported profile', /model = "gpt-6-sol"/.test(solXhighProfile) && /model_reasoning_effort = "xhigh"/.test(solXhighProfile));
+check('default subagents use GPT-6.1 Sol at high effort', /default_subagent_model = "gpt-6\.1-sol"/.test(defaultConfig) && /default_subagent_reasoning_effort = "high"/.test(defaultConfig));
+check('standard executor and specialist template use GPT-6.1 Sol at high effort', [executorProfile, specialistTemplate].every((profile) => /model = "gpt-6\.1-sol"/.test(profile) && /model_reasoning_effort = "high"/.test(profile)));
+check('higher Sol effort has an explicit supported profile', /model = "gpt-6\.1-sol"/.test(solXhighProfile) && /model_reasoning_effort = "xhigh"/.test(solXhighProfile));
 check('core profiles are TOML rather than Claude markdown profiles', !fs.readdirSync(path.join(ROOT, 'agents')).some((name) => name.endsWith('.md')));
 check('Claude review avoids the broken custom-agent MCP boundary', !fs.existsSync(path.join(ROOT, 'packs', 'claude', 'agents', 'reviewer-claude.toml')) && /project-level MCP block/.test(protocol));
 check('Claude reviewer uses one required project-scoped blocking MCP transport', /mcp__orchestra_claude_review__orchestra_review/.test(protocol) && /\[mcp_servers\.orchestra_claude_review\]/.test(claudePackConfig) && /required = true/.test(claudePackConfig));

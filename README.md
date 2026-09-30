@@ -25,8 +25,8 @@ crosses an independent review gate before it is reported complete.
 | Scout | `scout` | GPT-6 Luna / medium | fast read-only file, symbol, usage, history, and web mapping |
 | Detective | `detective` | GPT-6 Sol / high | read-only causal investigation and invariant discovery |
 | Mechanical executor | `executor-mechanical` | GPT-6 Luna / xhigh | airtight mechanical changes and codemods |
-| Standard executor | `executor` | GPT-6 Sol / high | ordinary scoped implementation; higher Sol effort is selectable |
-| Higher-effort standard | `executor-sol-xhigh` | GPT-6 Sol / xhigh | standard-scope work needing more reasoning without an Astra escalation |
+| Standard executor | `executor` | GPT-6.1 Sol / high | ordinary scoped implementation; higher Sol effort is selectable |
+| Higher-effort standard | `executor-sol-xhigh` | GPT-6.1 Sol / xhigh | standard-scope work needing more reasoning without an Astra escalation |
 | Heavy executor | `executor-heavy` | GPT-6 Astra / high | hard or escalated implementation |
 | Principal executor | `executor-heavy-xhigh` | GPT-6 Astra / xhigh | unusually hard, split-resistant implementation |
 | Exceptional principal | `executor-principal-max` | GPT-6 Astra / max | deep planning or extreme work after repeated hang-ups only |
@@ -66,6 +66,11 @@ PowerShell and POSIX wrappers are also included:
 The installer is idempotent. A plain re-run inherits the previously selected
 packs and specialists. Use `--no-packs` to remove optional pack-owned files,
 or pass a new comma-separated list to `--packs`.
+
+Fresh installs default subagents to `gpt-6.1-sol` at `high` reasoning effort.
+Re-running the installer updates managed executor profiles. Existing
+`.codex/config.toml` settings remain project-owned; set
+`agents.default_subagent_model = "gpt-6.1-sol"` there to adopt the new default.
 
 Useful commands:
 

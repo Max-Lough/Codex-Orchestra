@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Upgrade the standard executor, its xhigh profile, the specialist template,
+  and the default subagent model to GPT-6.1 Sol.
+
 ## 3.1.0 — 2026-09-25
 
 - Activate Director enforcement only while the latest primary-session model is

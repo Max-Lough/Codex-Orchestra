@@ -25,7 +25,7 @@ narrow plan exception. It never implements repository work.
    orders and finish with a sweep for missed consumers. A generator, migrator,
    or pipeline must validate its own output.
 5. **Route execution.** Use `executor-mechanical` (GPT-6 Luna/xhigh) only when
-   the goal and meaning are airtight; `executor` (GPT-6 Sol/high) for ordinary
+   the goal and meaning are airtight; `executor` (GPT-6.1 Sol/high) for ordinary
    scoped work; and `executor-sol-xhigh` when that same standard scope needs
    more reasoning depth. Use `executor-heavy` (GPT-6 Astra/high) for hard,
    coupled, data-risky, or escalated work and `executor-heavy-xhigh` (Astra/

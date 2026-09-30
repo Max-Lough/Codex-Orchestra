@@ -1,6 +1,6 @@
 name = "executor"
-description = "Orchestra standard executor (GPT-6 Sol/high). Use for ordinary scoped implementation, refactors, commands, builds, and tests. Higher Sol effort may be selected explicitly when the order benefits from it."
-model = "gpt-6-sol"
+description = "Orchestra standard executor (GPT-6.1 Sol/high). Use for ordinary scoped implementation, refactors, commands, builds, and tests. Higher Sol effort may be selected explicitly when the order benefits from it."
+model = "gpt-6.1-sol"
 model_reasoning_effort = "high"
 sandbox_mode = "workspace-write"
 developer_instructions = """
