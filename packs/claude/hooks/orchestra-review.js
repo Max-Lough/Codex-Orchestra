@@ -583,7 +583,10 @@ CLAIMS CHECKED and VERIFICATION form \`- <subject> -> STATUS <evidence>\` with
 an unformatted uppercase status. The validator also accepts a Unicode right
 arrow and exact paired **bold**, __bold__, *italic*, _italic_, or \`code\`
 wrappers around only the status. Keep the subject, arrow, and status on the
-same top-level bullet. Evidence may follow inline or in a clearly owned,
+same top-level bullet. Complete inline-code examples on one line are literal
+evidence, not competing report statuses; a single-backtick span containing only
+a status or status near-miss still participates in status validation.
+Evidence may follow inline or in a clearly owned,
 indented non-fenced prose continuation or evidence-only nested bullet. Do not
 move the arrow or status into a continuation or nested bullet, add a competing
 status construct, use an em dash as the arrow, or rely on fenced content as the

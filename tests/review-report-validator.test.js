@@ -136,4 +136,205 @@ for (const malformed of ['**CONFIRMED*', '__CONFIRMED_', '*CONFIRMED**', '_CONFI
   }
 }
 
+const statusFamilies = [
+  ['CLAIMS CHECKED', ['CONFIRMED', 'UNVERIFIED', 'REFUTED'], 'CONFIRMED', 'REFUTED'],
+  ['VERIFICATION', ['PASS', 'NOT-RUN', 'FAIL'], 'PASS', 'FAIL'],
+];
+function reportWithStatus(section, entry, verdict = 'APPROVE') {
+  return reviewReport(verdict, [
+    ['FINDINGS', '- none'],
+    ['CLAIMS CHECKED', section === 'CLAIMS CHECKED' ? entry : '- claim -> CONFIRMED (read src/app.js:17)'],
+    ['VERIFICATION', section === 'VERIFICATION' ? entry : '- node tests/value.test.js -> PASS (exit 0)'],
+    ['NITS', '- none'],
+  ]);
+}
+
+// Real Claude output quoted parser inputs as evidence; these are not report statuses.
+const quotedEvidenceRegression = reviewReport('APPROVE', [
+  ['FINDINGS', '- none'],
+  ['CLAIMS CHECKED', '- competing-status detection still works and is stricter than before -> CONFIRMED by probe\n' +
+    '  An inline `d -> OK. x` after a CONFIRMED status was accepted at HEAD and is now rejected. `other -> FAILED. y` is rejected.'],
+  ['VERIFICATION', '- node tests/review-report-validator.test.js -> PASS. observed exit 0'],
+  ['NITS', '- none'],
+]);
+assert.deepStrictEqual(validateClaudeReport(quotedEvidenceRegression),
+  { ok: true, verdict: 'APPROVE' }, 'real quoted-evidence report must remain valid');
+checked += 1;
+
+const quotedExamples = [
+  '`d -> OK. x` and `other -> FAILED. y`',
+  '`example -> FAIL. observed exit 1`',
+  '``example `literal` -> REFUTED. read old source``',
+  '``example -> `FAILED`. observed exit 1``',
+  '`example ``literal`` -> FAIL. observed exit 1`',
+];
+for (const [section, , positive] of statusFamilies) {
+  for (const example of quotedExamples) {
+    for (const separator of [' ', '\n  ', '\n  - ']) {
+      const entry = '- concrete subject -> ' + positive + '.' + separator + example;
+      assert.deepStrictEqual(validateClaudeReport(reportWithStatus(section, entry)),
+        { ok: true, verdict: 'APPROVE' }, 'literal code must remain original concrete evidence: ' + entry);
+      checked += 1;
+    }
+  }
+  for (const example of ['`quoted -> FAIL. example`', '``quoted -> `FAILED`. example``']) {
+    const entry = '- ' + example + ' -> ' + positive + '. ';
+    assert.deepStrictEqual(validateClaudeReport(reportWithStatus(section, entry + '[src/app.js:17]')),
+      { ok: true, verdict: 'APPROVE' }, 'quoted subjects must preserve original offsets');
+    assert.strictEqual(validateClaudeReport(reportWithStatus(section, entry + '[TODO]')).ok, false,
+      'offsets must not move subject text into placeholder evidence');
+    checked += 2;
+  }
+  for (const competitor of ['FAIL', 'REFUTED', 'UNKNOWN', 'OK', 'FAILED', 'SKIPPED']) {
+    for (const wrap of [(status) => status, (status) => '`' + status + '`']) {
+      for (const separator of [' ', '\n  ', '\n  - ']) {
+        const entry = '- concrete subject -> ' + positive + '. read src/app.js:17' + separator +
+          '`example -> PASS. literal` other -> ' + wrap(competitor) + '. observed exit 1';
+        assert.strictEqual(validateClaudeReport(reportWithStatus(section, entry)).ok, false,
+          'unquoted or standalone code status must remain a competitor: ' + entry);
+        checked += 1;
+      }
+    }
+  }
+  for (const example of ['`other -> FAILED. y', '``other -> FAILED. y`',
+    '`other -> FAILED. y``', '\\`other -> FAILED. y\\`']) {
+    for (const separator of [' ', '\n  ']) {
+      const entry = '- concrete subject -> ' + positive + '. read src/app.js:17' + separator + example;
+      assert.strictEqual(validateClaudeReport(reportWithStatus(section, entry)).ok, false,
+        'unmatched or escaped delimiters cannot hide competitors: ' + entry);
+      checked += 1;
+    }
+  }
+  for (const entry of [
+    '- `literal`-> ' + positive + ' read src/app.js:17',
+    '- subject -> `literal` ' + positive + ' read src/app.js:17',
+    '- subject -> ' + positive + '`literal` read src/app.js:17',
+    '- `literal -> ' + positive + ' read src/app.js:17`',
+    '- subject -> ``' + positive + '`` read src/app.js:17',
+  ]) {
+    assert.strictEqual(validateClaudeReport(reportWithStatus(section, entry)).ok, false,
+      'masking must not assemble an authoritative status: ' + entry);
+    checked += 1;
+  }
+}
+for (const section of ['FINDINGS', 'NITS']) {
+  for (const example of quotedExamples) {
+    for (const separator of [' ', '\n  ', '\n  - ']) {
+      const entry = '- ' + (section === 'FINDINGS' ? '[MINOR] ' : '') +
+        'Document this parser example:' + separator + example;
+      const report = reviewReport('APPROVE', [
+        ['FINDINGS', section === 'FINDINGS' ? entry : '- none'],
+        ['CLAIMS CHECKED', '- claim -> `CONFIRMED`. read src/app.js:17'],
+        ['VERIFICATION', '- node tests/value.test.js -> `PASS`. exit 0'],
+        ['NITS', section === 'NITS' ? entry : '- none'],
+      ]);
+      assert.deepStrictEqual(validateClaudeReport(report), { ok: true, verdict: 'APPROVE' },
+        'prose code examples must not become structured statuses: ' + entry);
+      checked += 1;
+    }
+  }
+}
+
+// Sentence punctuation must delimit real statuses without supplying missing evidence.
+for (const [section, statuses, positive, adverse] of statusFamilies) {
+  for (const punctuation of ['.', ',', ';', ':', '!', '?']) {
+    for (const status of statuses) {
+      const verdict = status === adverse ? 'REVISE' : 'APPROVE';
+      for (const [, arrow] of arrows) {
+        for (const [, wrap] of wrappers) {
+          for (const evidence of [' observed src/app.js:17', '\n  Observed src/app.js:17']) {
+            const entry = '- concrete subject ' + arrow + ' ' + wrap(status) + punctuation + evidence;
+            assert.deepStrictEqual(
+              validateClaudeReport(reportWithStatus(section, entry, verdict)),
+              { ok: true, verdict },
+              section + ' punctuation and evidence: ' + entry
+            );
+            checked += 1;
+          }
+        }
+      }
+    }
+
+    for (const suffix of ['', ' TODO', ' N/A', ' ...', ' placeholder']) {
+      const entry = '- concrete subject -> ' + positive + punctuation + suffix;
+      assert.strictEqual(validateClaudeReport(reportWithStatus(section, entry)).ok, false,
+        'punctuation must not supply concrete evidence: ' + entry);
+      checked += 1;
+    }
+    for (const competitor of ['CONFIRMED', 'REFUTED', 'UNVERIFIED', 'PASS', 'FAIL', 'NOT-RUN', 'UNKNOWN', 'OK']) {
+      for (const separator of [' ', '\n  ']) {
+        const entry = '- concrete subject -> ' + positive + '. read src/app.js:17' +
+          separator + 'other result -> ' + competitor + punctuation + ' observed exit 1';
+        assert.strictEqual(validateClaudeReport(reportWithStatus(section, entry)).ok, false,
+          'punctuated competing status must fail closed: ' + entry);
+        checked += 1;
+      }
+    }
+    const adverseReport = reportWithStatus(section,
+      '- concrete subject -> ' + adverse + punctuation + ' observed src/app.js:17');
+    const adverseResult = validateClaudeReport(adverseReport);
+    assert.strictEqual(adverseResult.ok, false, 'punctuated adverse status cannot approve');
+    assert.match(adverseResult.error, /APPROVE contradicts/);
+    checked += 1;
+  }
+
+  for (const status of [positive, 'UNKNOWN', 'OK']) {
+    for (const suffix of ['.glued', ':glued', '-glued', '_glued', 'glued']) {
+      const entry = '- concrete subject -> ' + status + suffix + ' read src/app.js:17';
+      assert.strictEqual(validateClaudeReport(reportWithStatus(section, entry)).ok, false,
+        'unknown or glued status must fail closed: ' + entry);
+      checked += 1;
+    }
+  }
+}
+
+// Bracket wrappers must not turn placeholder markers into concrete evidence.
+for (const [section, , positive] of statusFamilies) {
+  for (const punctuation of ['', '.', ',', ';', ':', '!', '?']) {
+    for (const placeholder of ['N/A', 'NA', 'not applicable', 'TBD', 'TODO', 'unknown', 'not provided', 'placeholder', '...', '']) {
+      for (const evidence of ['[' + placeholder + ']', '([' + placeholder + ']).']) {
+        for (const separator of [' ', '\n  ']) {
+          const entry = '- concrete subject -> ' + positive + punctuation + separator + evidence;
+          assert.strictEqual(validateClaudeReport(reportWithStatus(section, entry)).ok, false,
+            'wrapped placeholder cannot supply evidence: ' + entry);
+          checked += 1;
+        }
+      }
+    }
+    for (const evidence of ['[src/app.js:17]', '[TODO.md:12]', '[src/app.js:17] confirms the exported value']) {
+      const entry = '- concrete subject -> ' + positive + punctuation + ' ' + evidence;
+      assert.deepStrictEqual(validateClaudeReport(reportWithStatus(section, entry)),
+        { ok: true, verdict: 'APPROVE' }, 'real bracketed evidence remains valid: ' + entry);
+      checked += 1;
+    }
+  }
+}
+
+// Status ownership also applies to punctuated constructs in prose-only sections.
+for (const section of ['FINDINGS', 'NITS']) {
+  for (const punctuation of ['.', ',', ';', ':', '!', '?']) {
+    for (const status of ['CONFIRMED', 'REFUTED', 'UNVERIFIED', 'PASS', 'FAIL', 'NOT-RUN']) {
+      for (const [, arrow] of arrows) {
+        for (const [, wrap] of wrappers) {
+          const construct = 'status ' + arrow + ' ' + wrap(status) + punctuation + ' observed src/app.js:17';
+          for (const separator of [' ', '\n  ', '\n  - ']) {
+            const entry = '- ' + (section === 'FINDINGS' ? '[MINOR] ' : '') +
+              'Concrete prose entry.' + separator + construct;
+            const report = reviewReport('APPROVE', [
+              ['FINDINGS', section === 'FINDINGS' ? entry : '- none'],
+              ['CLAIMS CHECKED', '- claim -> CONFIRMED read src/app.js:17'],
+              ['VERIFICATION', '- node tests/value.test.js -> PASS exit 0'],
+              ['NITS', section === 'NITS' ? entry : '- none'],
+            ]);
+            const result = validateClaudeReport(report);
+            assert.strictEqual(result.ok, false, 'structured status outside its section: ' + entry);
+            assert.match(result.error, /structured claim\/check statuses must appear only/);
+            checked += 1;
+          }
+        }
+      }
+    }
+  }
+}
+
 console.log('review report validator: ' + checked + ' semantic cases passed');

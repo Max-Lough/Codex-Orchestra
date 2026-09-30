@@ -32,7 +32,7 @@ function concreteEvidence(value) {
   const trimmed = String(value || '').trim();
   if (!trimmed) return false;
   const core = trimmed
-    .replace(/^[\s(:\-\u2013\u2014]+/, '')
+    .replace(/^[\s(\[:\-\u2013\u2014]+/, '')
     .replace(/[\s)\].,;:\-\u2013\u2014]+$/, '')
     .trim();
   return meaningful(core) && /[A-Za-z0-9]/.test(core);
@@ -144,7 +144,33 @@ function explicitNoneOrEntries(entries, label, validateEntry) {
   return { ok: true, none: false, actionable };
 }
 
+function statusSemanticView(value) {
+  const text = String(value || '');
+  const runs = Array.from(text.matchAll(/`+/g));
+  const view = text.split('');
+  for (let index = 0; index < runs.length; index += 1) {
+    const opening = runs[index];
+    const escapes = /\\*$/.exec(text.slice(0, opening.index))[0].length;
+    if (escapes % 2) continue;
+    let closingIndex = index + 1;
+    while (closingIndex < runs.length && runs[closingIndex][0].length !== opening[0].length) {
+      closingIndex += 1;
+    }
+    if (closingIndex === runs.length) continue;
+    const closing = runs[closingIndex];
+    const content = text.slice(opening.index + opening[0].length, closing.index);
+    const standaloneStatus = opening[0].length === 1 &&
+      COMPETING_STATUSES.includes(content.toUpperCase().replace(' ', '-'));
+    // Literal examples are inert, but `PASS` and `FAILED` still denote statuses.
+    // A non-whitespace mask preserves offsets without joining tokens across code.
+    if (!standaloneStatus) view.fill('\0', opening.index, closing.index + closing[0].length);
+    index = closingIndex;
+  }
+  return view.join('');
+}
+
 function statusConstructs(value, statuses) {
+  const semantic = statusSemanticView(value);
   const alternatives = statuses.map((status) => status.replace('-', '[- ]')).join('|');
   const status = '(?:\\*\\*(?:' + alternatives + ')\\*\\*' +
     '|__(?:' + alternatives + ')__' +
@@ -152,10 +178,12 @@ function statusConstructs(value, statuses) {
     '|_(?:' + alternatives + ')_' +
     '|`(?:' + alternatives + ')`' +
     '|(?:' + alternatives + '))';
-  const matcher = new RegExp('(^|\\s)(->|\\u2192)\\s+(' + status + ')(?=$|\\s)', 'ig');
+  // Sentence punctuation is a delimiter only at a word boundary; glued
+  // suffixes must not turn an unknown token into an authoritative status.
+  const matcher = new RegExp('(^|\\s)(->|\\u2192)\\s+(' + status + ')[.,;:!?]?(?=$|\\s)', 'ig');
   const matches = [];
   let match;
-  while ((match = matcher.exec(String(value || ''))) !== null) {
+  while ((match = matcher.exec(semantic)) !== null) {
     const start = match.index + match[1].length;
     matches.push({
       start,

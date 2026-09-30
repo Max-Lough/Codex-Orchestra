@@ -61,6 +61,9 @@ preferred VERIFICATION grammar is
 The Unicode right arrow is accepted as an equivalent delimiter. A status alone
 may use one exact matching pair of `**`, `__`, `*`, `_`, or backtick
 wrappers. The subject, arrow, and status must remain on the top-level bullet.
+Complete inline-code examples on one line are literal evidence, not competing
+report statuses. A single-backtick span containing only a status or status
+near-miss (such as `FAILED`) still participates in status validation.
 Evidence may be inline or in a clearly owned indented non-fenced prose
 continuation or evidence-only nested bullet. Competing status constructs,
 mismatched wrappers, em-dash delimiters, split or nested status bullets, and
